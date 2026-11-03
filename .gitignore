@@ -15,3 +15,5 @@ sourcemap.json
 .DS_Store
 node_modules/
 Packages/
+
+tests/build/
