@@ -6,3 +6,12 @@
 /*.rbxl.lock
 
 sourcemap.json
+
+
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+.DS_Store
+node_modules/
+Packages/
