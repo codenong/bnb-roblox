@@ -59,9 +59,9 @@ local Constants = {
 
     -- Match flow / networking
     SNAPSHOT_RATE = 20,
-    WAITING_SECONDS = 4,
+    WAITING_SECONDS = 10,
     RESULTS_SECONDS = 4,
-    WAITING_TICKS = 4 * 30,
+    WAITING_TICKS = 10 * 30,
     RESULTS_TICKS = 4 * 30,
 
     -- Rendering

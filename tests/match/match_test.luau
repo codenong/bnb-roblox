@@ -7,6 +7,7 @@ local check = TestLib.check
 local MatchService = require("./MatchService")
 local PlayerService = require("./PlayerService")
 local Net = require("./Net")
+local Constants = require("./Constants")
 
 local nextUserId = 5000
 local function addPlayer(name: string)
@@ -76,7 +77,8 @@ check("rooms have distinct ids", waitingA and waitingB and waitingA.roomId ~= wa
 check("practice room starts in waiting", waitingA and waitingA.phase == "waiting", waitingA and waitingA.phase)
 check("practice room is 1v1", waitingA and waitingA.mode == "practice" and waitingA.maxPlayers == 2)
 check("practice flag is exposed", waitingA and waitingA.practice == true)
-check("waiting countdown", waitingA and waitingA.endsIn == 4, waitingA and waitingA.endsIn)
+check("waiting countdown", waitingA and waitingA.endsIn == Constants.WAITING_SECONDS,
+    waitingA and waitingA.endsIn)
 check("alice room only contains alice", waitingA and #waitingA.roster == 1 and waitingA.roster[1].id == aliceId)
 check("bob room only contains bob", waitingB and #waitingB.roster == 1 and waitingB.roster[1].id == bobId)
 check("waiting bot fill", waitingA and waitingA.botFill == 1, waitingA and waitingA.botFill)
@@ -93,16 +95,17 @@ local aliceEntry = waitingA and findEntry(waitingA.roster, aliceId)
 check("roster carries selected char", aliceEntry and aliceEntry.char == "haidao", aliceEntry and aliceEntry.char)
 check("bob keeps default char", waitingB and waitingB.roster[1].char == "baobao", waitingB and waitingB.roster[1].char)
 
-advance(119)
-check("alice still waiting after 119 ticks", MatchService.getSync(alice).phase == "waiting")
-check("bob still waiting after 119 ticks", MatchService.getSync(bob).phase == "waiting")
+advance(Constants.WAITING_TICKS - 1)
+check("alice still waiting before countdown ends", MatchService.getSync(alice).phase == "waiting")
+check("bob still waiting before countdown ends", MatchService.getSync(bob).phase == "waiting")
 advance(1)
 
 ---------------------------------------------------------------- 两局同时开始
 
 local playingA = MatchService.getSync(alice)
 local playingB = MatchService.getSync(bob)
-check("alice round starts after 120 ticks", playingA and playingA.phase == "playing", playingA and playingA.phase)
+check("alice round starts after the waiting countdown", playingA and playingA.phase == "playing",
+    playingA and playingA.phase)
 check("bob round starts independently", playingB and playingB.phase == "playing", playingB and playingB.phase)
 check("two participants per practice room", playingA and #playingA.roster == 2, playingA and #playingA.roster)
 check("one bot per practice room", playingA and countBots(playingA.roster) == 1, playingA and countBots(playingA.roster))
@@ -167,7 +170,7 @@ local bobRoomId = MatchService.getSync(bob).roomId
 local bobPlayers = #MatchService.getSync(bob).snapshot.players
 check("mid-round join is not added to another room", bobPlayers == 2, bobPlayers)
 
-advance(120)
+advance(Constants.WAITING_TICKS)
 local playingC = MatchService.getSync(cara)
 check("cara round starts in her room", playingC and playingC.phase == "playing" and #playingC.roster == 2)
 check("bob room is unchanged", MatchService.getSync(bob).phase == "playing" and MatchService.getSync(bob).roomId == bobRoomId)
