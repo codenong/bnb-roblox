@@ -55,6 +55,8 @@ local selfStatus
 local selfStats
 local playerRows = {}
 local waitingOverlay
+local waitingTitle
+local waitingSubtitle
 local waitingInfo
 local waitingCountdown
 local waitingHint
@@ -459,19 +461,19 @@ local function buildWaiting()
     )
     wipe.BackgroundTransparency = 0.55
 
-    centeredLabel(
+    waitingTitle = centeredLabel(
         waitingOverlay,
         "Title",
-        "海盗14  ·  自动匹配",
+        "海盗14  ·  练习模式",
         UDim2.fromOffset(600, 32),
         UDim2.fromOffset(0, 18),
         TEXT,
         24
     )
-    centeredLabel(
+    waitingSubtitle = centeredLabel(
         waitingOverlay,
         "Subtitle",
-        "选择你的角色",
+        "1v1 · 选择角色，对战 Bot",
         UDim2.fromOffset(600, 20),
         UDim2.fromOffset(0, 51),
         SUBTLE,
@@ -551,7 +553,7 @@ local function buildWaiting()
     waitingInfo = centeredLabel(
         waitingOverlay,
         "Info",
-        "真人 1 / 6 · Bot 补位 5",
+        "练习模式 · 真人 1 / 2 · Bot 1",
         UDim2.fromOffset(580, 20),
         UDim2.fromOffset(10, 352),
         SUBTLE,
@@ -578,7 +580,7 @@ local function buildWaiting()
             0
         )
         round(dot, 0.5)
-        local name = label(slot, "Name", "Bot 补位", UDim2.fromOffset(70, 30), UDim2.fromOffset(19, 0), SUBTLE, 9)
+        local name = label(slot, "Name", "Bot 对手", UDim2.fromOffset(70, 30), UDim2.fromOffset(19, 0), SUBTLE, 9)
         waitingSlots[i] = { frame = slot, dot = dot, name = name }
     end
 
@@ -594,7 +596,7 @@ local function buildWaiting()
     waitingHint = centeredLabel(
         waitingOverlay,
         "Hint",
-        "点击角色卡选择，开局后自动补 Bot",
+        "点击角色卡选择，击败 Bot 赢得对局",
         UDim2.fromOffset(600, 20),
         UDim2.fromOffset(0, 462),
         SUBTLE,
@@ -641,37 +643,51 @@ local function updateWaiting()
         entry.card.BackgroundColor3 = if isSelected then Color3.fromRGB(30, 60, 82) else PANEL_2
     end
 
+    local maxPlayers = state.maxPlayers or Constants.MAX_PLAYERS
+    local practice = state.practice == true or state.mode == "practice"
     local real = #state.roster
-    waitingInfo.Text = string.format(
-        "真人 %d / %d  ·  Bot 补位 %d",
-        real,
-        Constants.MAX_PLAYERS,
-        state.botFill or math.max(0, Constants.MAX_PLAYERS - real)
-    )
+
+    if waitingTitle then
+        waitingTitle.Text = if practice then "海盗14  ·  练习模式" else "海盗14  ·  对战"
+    end
+    if waitingSubtitle then
+        waitingSubtitle.Text = if practice then "1v1 · 选择角色，对战 Bot" else "选择你的角色"
+    end
+
+    waitingInfo.Text = if practice
+        then string.format("练习模式  ·  真人 %d / %d  ·  Bot %d", real, maxPlayers, state.botFill or math.max(0, maxPlayers - real))
+        else string.format("真人 %d / %d  ·  Bot 补位 %d", real, maxPlayers, state.botFill or math.max(0, maxPlayers - real))
 
     for i = 1, 6 do
         local slot = waitingSlots[i]
         local entry = state.roster[i]
-        if entry then
-            slot.dot.BackgroundColor3 = teamColor(entry.colorIndex)
-            slot.dot.BackgroundTransparency = 0
-            local name = entry.name
-            if #name > 8 then
-                name = string.sub(name, 1, 8)
-            end
-            slot.name.Text = (if entry.isBot then "BOT " else "") .. name
-            slot.name.TextColor3 = teamColor(entry.colorIndex)
+        if i > maxPlayers then
+            slot.frame.Visible = false
         else
-            slot.dot.BackgroundColor3 = Color3.fromRGB(80, 105, 120)
-            slot.dot.BackgroundTransparency = 0.2
-            slot.name.Text = "Bot 补位"
-            slot.name.TextColor3 = SUBTLE
+            slot.frame.Visible = true
+            if entry then
+                slot.dot.BackgroundColor3 = teamColor(entry.colorIndex)
+                slot.dot.BackgroundTransparency = 0
+                local name = entry.name
+                if #name > 8 then
+                    name = string.sub(name, 1, 8)
+                end
+                slot.name.Text = (if entry.isBot then "BOT " else "") .. name
+                slot.name.TextColor3 = teamColor(entry.colorIndex)
+            else
+                slot.dot.BackgroundColor3 = Color3.fromRGB(80, 105, 120)
+                slot.dot.BackgroundTransparency = 0.2
+                slot.name.Text = if practice then "Bot 对手" else "Bot 补位"
+                slot.name.TextColor3 = SUBTLE
+            end
         end
     end
 
     if state.endsIn and state.endsIn > 0 then
         waitingCountdown.Text = string.format("%d 秒后开始", state.endsIn)
-        waitingHint.Text = "点击角色卡选择 · 开局后自动补 Bot"
+        waitingHint.Text = if practice
+            then "点击角色卡选择 · 击败 Bot 赢得对局"
+            else "点击角色卡选择 · 开局后自动补 Bot"
     else
         waitingCountdown.Text = "等待玩家加入…"
         waitingHint.Text = "第一名玩家加入后开始倒计时"
@@ -968,7 +984,7 @@ local function showResult()
         "用时 %s  ·  存活 %d / %d",
         formatClock(result.duration or 0),
         result.aliveCount or 0,
-        Constants.MAX_PLAYERS
+        state.maxPlayers or Constants.MAX_PLAYERS
     )
     resultNext.Text = if (state.endsIn or 0) > 0
         then string.format("下一局 %d 秒后开始", state.endsIn)
@@ -996,10 +1012,15 @@ local function updateRoster()
         rosterById[entry.id] = entry
     end
 
+    local maxPlayers = state.maxPlayers or Constants.MAX_PLAYERS
+    local practice = state.practice == true or state.mode == "practice"
+
     for i = 1, 6 do
         local row = playerRows[i]
         local entry = (state.roster or {})[i]
-        if entry then
+        if i > maxPlayers then
+            row.row.Visible = false
+        elseif entry then
             row.row.Visible = true
             local color = teamColor(entry.colorIndex)
             local player = findPlayer(entry.id)
@@ -1041,10 +1062,10 @@ local function updateRoster()
         else
             if state.phase == "waiting" then
                 row.row.Visible = true
-                row.name.Text = "Bot 补位"
+                row.name.Text = if practice then "Bot 对手" else "Bot 补位"
                 row.name.TextColor3 = SUBTLE
                 row.name.TextTransparency = 0.35
-                row.role.Text = "自动匹配"
+                row.role.Text = if practice then "练习模式" else "自动匹配"
                 row.role.TextColor3 = SUBTLE
                 row.dot.BackgroundColor3 = Color3.fromRGB(80, 105, 120)
                 row.dot.BackgroundTransparency = 0.2
@@ -1317,7 +1338,7 @@ function Hud.init(screenGui)
     subtitleLabel = label(
         stage,
         "GameSubtitle",
-        "BnB 自动匹配 · 最多 6 人 · Bot 补位",
+        "BnB 练习模式 · 1v1 对战 Bot",
         UDim2.fromOffset(500, 20),
         UDim2.fromOffset(21, 35),
         SUBTLE,

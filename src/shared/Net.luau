@@ -5,11 +5,14 @@
 -- Input        C->S RemoteEvent      dirs: {string}        oldest press first, newest last
 -- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
 -- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
--- RoundState   S->C RemoteEvent      phase/roster/timers/yourId/grid/spawns
+-- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns
 -- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change)
 -- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues
 -- RoundEnd     S->C RemoteEvent      winnerId/name/char/colorIndex/duration/alive
--- GetSync      C<=>S RemoteFunction  () -> full phase/roster/snapshot payload
+-- GetSync      C<=>S RemoteFunction  () -> full phase/room/roster/snapshot payload
+--
+-- Server sends are room-scoped: Room.luau uses Net.send() for its members.
+-- Net.broadcast() remains available for server-wide notices only.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")

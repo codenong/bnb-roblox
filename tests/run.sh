@@ -36,7 +36,7 @@ mkdir -p "$MATCH_BUILD"
 for f in ../src/shared/*.luau; do
   cp "build/$(basename "$f")" "$MATCH_BUILD/"
 done
-for name in MatchService PlayerService; do
+for name in MatchService PlayerService Room SnapshotService; do
   {
     printf 'local __env = require("./TestEnv")\n'
     printf 'local game = __env.game\n'
@@ -50,13 +50,15 @@ for name in MatchService PlayerService; do
 done
 cp match/TestEnv.luau "$MATCH_BUILD/TestEnv.luau"
 cp match/StubBotService.luau "$MATCH_BUILD/BotService.luau"
-cp match/StubSnapshotService.luau "$MATCH_BUILD/SnapshotService.luau"
 cp match/StubNet.luau "$MATCH_BUILD/Net.luau"
 cp match/match_test.luau "$MATCH_BUILD/"
+cp match/room_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
-echo "== match_test.luau (stubbed server)"
+echo "== match_test.luau (room manager, stubbed server)"
 "$LUAU" "$MATCH_BUILD/match_test.luau"
+echo "== room_test.luau (per-room audience)"
+"$LUAU" "$MATCH_BUILD/room_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client

@@ -1,31 +1,38 @@
 -- src/server/SnapshotService.luau
--- 20Hz snapshot cadence inside the fixed 30Hz simulation. Called once per
--- simulation tick with DT; 30 ticks therefore produce ~20 snapshots.
+-- Per-room 20Hz snapshot cadence inside the fixed 30Hz simulation. Each Room
+-- owns an instance, so two rooms never share an accumulator or a recipient
+-- list. The caller supplies the send callback (room-scoped, not broadcast).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
-local Net = require(Shared:WaitForChild("Net"))
 
 local SnapshotService = {}
+local Snapshot = {}
+Snapshot.__index = Snapshot
 
-local accumulator = 0
 local interval = 1 / Constants.SNAPSHOT_RATE
 
-function SnapshotService.reset()
-    accumulator = 0
+function SnapshotService.new()
+    return setmetatable({
+        accumulator = 0,
+    }, Snapshot)
 end
 
-function SnapshotService.step(game)
-    accumulator += Constants.DT
-    if accumulator + 1e-9 >= interval then
-        accumulator -= interval
-        if accumulator < 0 then
-            accumulator = 0
+function Snapshot:reset()
+    self.accumulator = 0
+end
+
+function Snapshot:step(simulation, send)
+    self.accumulator += Constants.DT
+    if self.accumulator + 1e-9 >= interval then
+        self.accumulator -= interval
+        if self.accumulator < 0 then
+            self.accumulator = 0
         end
-        Net.broadcast("Snapshot", game:snapshot())
+        send(simulation:snapshot())
     end
 end
 
-return SnapshotService
+return table.freeze(SnapshotService)

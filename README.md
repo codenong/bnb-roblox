@@ -1,10 +1,10 @@
 # bnb-roblox
 
-把 `~/code/game/BnB`（网页版泡泡堂）完整移植到 Roblox 的项目。服务端权威、纯俯视 2D、自动匹配。
+把 `~/code/game/BnB`（网页版泡泡堂）完整移植到 Roblox 的项目。服务端权威、纯俯视 2D、房间化对局。
 
 - **服务端**：30Hz 固定步长运行纯 Luau 的 `Game` 引擎（从 BnB `server/game.js` 移植）。移动、碰撞、泡泡、爆炸、道具、坐骑、推箱、踢泡、遥控、针、被困、死亡、掉落、胜负全部在服务端判定。
 - **客户端**：只做表现。用 `ScreenGui` 画布渲染地图、精灵、HUD、等待/选角、3-2-1、结算，并在两个快照之间插值。客户端不发送位置。
-- **对局**：进入服务器后自动等待 4 秒 → 选角色 → 3 秒倒计时 → 对战 → 4 秒结算 → 自动下一局。真人不足 6 人时 Bot 补满；超过 6 人时多出的真人观战到下一局。
+- **对局（M1）**：服务端可为同一服务器上的多个真人分别运行独立房间。当前每个真人进入自己的练习模式 1v1：等待 4 秒 → 选角色 → 3 秒倒计时 → 对战 Bot → 4 秒结算 → 自动下一局。`RoundState`、快照、`Fx`、`RoundEnd` 只发送给该房间的成员，房间之间互不影响。原有 6 人混合 Bot 模式不再对外提供，但引擎仍支持 N 人。
 - **素材**：复用 BnB 的图片/音频。素材未上传时客户端自动降级为色块/文字，逻辑仍可完整游玩。
 
 ## 环境
@@ -31,7 +31,7 @@ rojo serve
 
 在 Studio 中通过 Rojo 插件连接。
 
-> `default.project.json` 已关闭 Roblox 默认角色（`Players.CharacterAutoLoads=false`）、清空 3D 场地，并关闭 `StreamingEnabled`。唯一需要手动设置的是 **Place → Game Settings → Players → Max Players = 6**（Rojo 无法写这个属性）。超过 6 名真人时，第 7 人起观战。
+> `default.project.json` 已关闭 Roblox 默认角色（`Players.CharacterAutoLoads=false`）、清空 3D 场地，并关闭 `StreamingEnabled`。当前每个真人会获得独立练习房间，因此 Max Players 不再是单局人数上限；双客户端验证 1v1 时保持默认即可，后续多房间压测再在 **Place → Game Settings → Players → Max Players** 调高（Rojo 无法写这个属性）。
 
 ## 操作
 
@@ -54,7 +54,7 @@ bash tests/run.sh
 LUAU=/usr/local/bin/luau bash tests/run.sh
 ```
 
-覆盖地图结构、321 冻结、泡泡/连锁/火焰阻断、推箱、踢泡、道具/坐骑/针/遥控、被困/死亡/掉落、断线、胜负、快照字段与 grid 变化；`tests/match/` 用轻量 Roblox/Net stub 跑通等待→选角→开局→中途观战→断线→结算→下一局，并验证 >6 人观战、快照协议字段和输入清洗。
+覆盖地图结构、321 冻结、泡泡/连锁/火焰阻断、推箱、踢泡、道具/坐骑/针/遥控、被困/死亡/掉落、断线、胜负、快照字段与 grid 变化；`tests/match/` 用轻量 Roblox/Net stub 跑通练习房间的等待→选角→开局→断线→结算→下一局，并验证多房间互不影响、快照/结算只发给房间成员、快照协议字段、输入清洗和独立房间生命周期。
 
 ## 素材管线（可选）
 
@@ -135,7 +135,7 @@ Studio 映射优先于 Open Cloud 缓存，便于手动纠正。两条路径最�
 
 ```
 src/shared/   Constants/Grid/Map/Characters/Mounts/Flame/Game/Bot/Net/Sprites/AssetIds
-src/server/   Main.server / MatchService / PlayerService / BotService / SnapshotService
+src/server/   Main.server / MatchService / Room / PlayerService / BotService / SnapshotService
 src/client/   Main.client / Board / Renderer / Hud / Input / Audio / Interpolation
 tools/        prepare_assets.py / verify_assets.mjs / upload_assets.mjs / gen_asset_ids.mjs
 tests/        headless Luau tests（Game/Bot/Map/Match）+ match stub 环境
@@ -149,14 +149,16 @@ assets/       prepared 输出与上传缓存（.cache 不提交）
 | `Input` | C→S | 方向数组，最多 4 个合法方向，最后按下优先 |
 | `Action` | C→S | `"place"` / `"use"` |
 | `SelectChar` | C→S | `"baobao"` / `"haidao"`（仅等待阶段有效） |
-| `RoundState` | S→C | phase、计时、roster、yourId、grid、结算 |
+| `RoundState` | S→C | phase、roomId、mode、maxPlayers、计时、roster、yourId、grid、结算 |
 | `Snapshot` | S→C 20Hz | 玩家、泡泡、爆炸、道具、掉落、滑箱；grid 仅变化时附带 |
 | `Fx` | S→C | 音效提示 |
 | `RoundEnd` | S→C | 胜者/平局/用时/存活数 |
-| `GetSync` | C⇄S | 中途加入/初始同步（强制带当前地图，不消费广播 grid 标记） |
+| `GetSync` | C⇄S | 初始同步（按服务器分配的练习房间，强制带当前地图，不消费广播 grid 标记） |
+
+`Snapshot`、`RoundState`、`Fx`、`RoundEnd` 都由房间实例通过 `Net.send` 定向发送；`Net.broadcast` 仅保留给未来的服务器级通知。
 
 ## 开发状态
 
-- 共享引擎与服务端状态机通过 285 项 headless 测试；客户端画布/渲染/HUD/输入/音频已接线。
-- 尚未完成：手机/手柄实机测试，以及多客户端联机的完整验证。素材 ID 已填入，需在 Studio 里确认图片和音频都能正常加载。
+- 共享引擎、房间化服务端状态机和客户端入口通过 **329 项 headless 测试**；其中包含多房间隔离、快照/结算受众、练习 1v1 组合和 N 人房间配置测试。客户端画布/渲染/HUD/输入/音频已接线。
+- M1 房间化重构与练习 1v1 已完成；剩余实机项是 Studio 双客户端验证（两个真人应各自进入独立练习房间）以及手机/手柄实机测试。素材 ID 已填入，需在 Studio 里确认图片和音频都能正常加载。
 - 上传素材属于外发操作；请在明确确认后再运行上传命令。

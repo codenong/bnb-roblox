@@ -46,6 +46,7 @@ local Constants = {
 
     -- Teams (sprite variants / HUD colors)
     MAX_PLAYERS = 6,
+    PRACTICE_PLAYERS = 2,
     TEAM_COLORS = { "red", "blue", "green", "yellow", "purple", "orange" },
     TEAM_HEX = {
         red = "#e23b3b",
