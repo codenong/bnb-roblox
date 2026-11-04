@@ -17,3 +17,6 @@ node_modules/
 Packages/
 
 tests/build/
+
+# Asset upload cache (contains asset IDs; never API keys)
+assets/.cache/

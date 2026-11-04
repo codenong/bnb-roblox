@@ -1,61 +1,82 @@
 -- src/shared/Grid.luau
+-- Original BnB logic coordinates are 0-based tile/pixel coordinates.
 
 local Constants = require(script.Parent.Constants)
 
 local Grid = {}
 
-local CELL_SIZE = Constants.CELL_SIZE
-local DEFAULT_ORIGIN = Constants.MAP_ORIGIN
+local TILE = Constants.TILE
+local CHARS = { [0] = ".", [1] = "#", [2] = "o", [3] = "H", [4] = "x" }
 
--- 网格坐标转换为世界坐标
--- col: 列，从 1 开始（可以是小数，用于玩家的连续位置）
--- row: 行，从 1 开始（可以是小数）
--- y: 世界高度
--- origin: 第一格中心点，可选
-function Grid.cellToWorld(col: number, row: number, y: number?, origin: Vector3?): Vector3
-    local mapOrigin = origin or DEFAULT_ORIGIN
-    local height = y or mapOrigin.Y
-
-    local x = mapOrigin.X + (col - 1) * CELL_SIZE
-    local z = mapOrigin.Z + (row - 1) * CELL_SIZE
-
-    return Vector3.new(x, height, z)
+function Grid.key(x: number, y: number): string
+    return tostring(x) .. "," .. tostring(y)
 end
 
--- 世界坐标转换为最近的网格坐标
-function Grid.worldToCell(position: Vector3, origin: Vector3?): (number, number)
-    local mapOrigin = origin or DEFAULT_ORIGIN
-
-    local col = math.floor((position.X - mapOrigin.X) / CELL_SIZE + 0.5) + 1
-    local row = math.floor((position.Z - mapOrigin.Z) / CELL_SIZE + 0.5) + 1
-
-    return col, row
+function Grid.parseKey(key: string): (number, number)
+    local comma = string.find(key, ",", 1, true)
+    if not comma then
+        return 0, 0
+    end
+    return tonumber(string.sub(key, 1, comma - 1)) or 0,
+        tonumber(string.sub(key, comma + 1)) or 0
 end
 
--- 判断网格坐标是否位于地图范围内
-function Grid.isInside(col: number, row: number, width: number?, height: number?): boolean
-    local mapWidth = width or Constants.MAP_WIDTH
-    local mapHeight = height or Constants.MAP_HEIGHT
-
-    return col >= 1
-        and col <= mapWidth
-        and row >= 1
-        and row <= mapHeight
+function Grid.tileOf(pixel: number): number
+    return math.floor(pixel / TILE)
 end
 
--- 连续坐标（格）所在的整数格子
-function Grid.cellOf(x: number, z: number): (number, number)
-    return math.floor(x + 0.5), math.floor(z + 0.5)
+function Grid.center(tileValue: number): number
+    return tileValue * TILE + TILE / 2
 end
 
--- 格子的唯一数字 key，用于做 set / 字典索引
-function Grid.key(col: number, row: number): number
-    return row * 1000 + col
+function Grid.isInside(x: number, y: number): boolean
+    return x >= 0 and y >= 0 and x < Constants.COLS and y < Constants.ROWS
 end
 
-function Grid.fromKey(key: number): (number, number)
-    local row = math.floor(key / 1000)
-    return key - row * 1000, row
+function Grid.sign(value: number): number
+    if value > 0 then
+        return 1
+    elseif value < 0 then
+        return -1
+    end
+    return 0
+end
+
+-- grid is 0-based: grid[y][x]; rows are serialized as 15-char strings.
+function Grid.gridToRows(grid): { string }
+    local rows = {}
+    for y = 0, Constants.ROWS - 1 do
+        local chars = {}
+        for x = 0, Constants.COLS - 1 do
+            chars[x + 1] = CHARS[grid[y][x]] or "."
+        end
+        rows[y + 1] = table.concat(chars)
+    end
+    return rows
+end
+
+function Grid.rowsToGrid(rows): { { number } }
+    local grid = {}
+    for y = 0, Constants.ROWS - 1 do
+        local row = {}
+        local text = rows[y + 1] or string.rep(".", Constants.COLS)
+        for x = 0, Constants.COLS - 1 do
+            local ch = string.sub(text, x + 1, x + 1)
+            local tile = 0
+            if ch == "#" then
+                tile = 1
+            elseif ch == "o" then
+                tile = 2
+            elseif ch == "H" then
+                tile = 3
+            elseif ch == "x" then
+                tile = 4
+            end
+            row[x] = tile
+        end
+        grid[y] = row
+    end
+    return grid
 end
 
 return table.freeze(Grid)

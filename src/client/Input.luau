@@ -1,137 +1,217 @@
 -- src/client/Input.luau
--- 统一的输入：键盘 WASD/方向键、手柄摇杆/十字键、触屏虚拟方向键
--- 方向约定：返回 (dirX, dirZ)，dirX>0 是屏幕右侧（列增加），dirZ<0 是屏幕上方（行减少）
+-- Keyboard, gamepad and touch input. Direction order is oldest press first,
+-- newest press last; Game treats the last entry as the most recent direction.
 
 local UserInputService = game:GetService("UserInputService")
 
 local Input = {}
 
--- 玩家按下"放泡泡"时触发
-Input.BombPressed = Instance.new("BindableEvent")
+Input.placePressed = Instance.new("BindableEvent")
+Input.usePressed = Instance.new("BindableEvent")
+
+local enabled = true
+local controls = nil
 
 local MOVE_KEYS = {
-    [Enum.KeyCode.W] = { 0, -1 },
-    [Enum.KeyCode.Up] = { 0, -1 },
-    [Enum.KeyCode.DPadUp] = { 0, -1 },
-    [Enum.KeyCode.S] = { 0, 1 },
-    [Enum.KeyCode.Down] = { 0, 1 },
-    [Enum.KeyCode.DPadDown] = { 0, 1 },
-    [Enum.KeyCode.A] = { -1, 0 },
-    [Enum.KeyCode.Left] = { -1, 0 },
-    [Enum.KeyCode.DPadLeft] = { -1, 0 },
-    [Enum.KeyCode.D] = { 1, 0 },
-    [Enum.KeyCode.Right] = { 1, 0 },
-    [Enum.KeyCode.DPadRight] = { 1, 0 },
+    [Enum.KeyCode.W] = "up",
+    [Enum.KeyCode.Up] = "up",
+    [Enum.KeyCode.DPadUp] = "up",
+    [Enum.KeyCode.S] = "down",
+    [Enum.KeyCode.Down] = "down",
+    [Enum.KeyCode.DPadDown] = "down",
+    [Enum.KeyCode.A] = "left",
+    [Enum.KeyCode.Left] = "left",
+    [Enum.KeyCode.DPadLeft] = "left",
+    [Enum.KeyCode.D] = "right",
+    [Enum.KeyCode.Right] = "right",
+    [Enum.KeyCode.DPadRight] = "right",
 }
 
-local BOMB_KEYS = {
+local PLACE_KEYS = {
     [Enum.KeyCode.Space] = true,
-    [Enum.KeyCode.E] = true,
     [Enum.KeyCode.ButtonA] = true,
 }
 
-local STICK_DEADZONE = 0.3
+local USE_KEYS = {
+    [Enum.KeyCode.LeftControl] = true,
+    [Enum.KeyCode.RightControl] = true,
+    [Enum.KeyCode.LeftShift] = true,
+    [Enum.KeyCode.RightShift] = true,
+    [Enum.KeyCode.E] = true,
+    [Enum.KeyCode.ButtonB] = true,
+    [Enum.KeyCode.ButtonX] = true,
+}
 
-local held = {} -- [KeyCode] = true
-local stickX, stickZ = 0, 0
-local touchHeld = {} -- [按钮] = { x, z }
+local sources = {}
+local sequence = 0
 
-function Input.getDirection(): (number, number)
-    local x, z = 0, 0
-
-    for keyCode in held do
-        local vector = MOVE_KEYS[keyCode]
-        x += vector[1]
-        z += vector[2]
+local function setSource(source: string, direction: string?)
+    if direction then
+        sequence += 1
+        sources[source] = { direction = direction, order = sequence }
+    else
+        sources[source] = nil
     end
-
-    x += stickX
-    z += stickZ
-
-    for _, vector in touchHeld do
-        x += vector[1]
-        z += vector[2]
-    end
-
-    local length = math.sqrt(x * x + z * z)
-    if length > 1 then
-        x /= length
-        z /= length
-    end
-
-    return x, z
 end
 
----------------------------------------------------------------- 触屏
+local function clearSources()
+    sources = {}
+end
 
-local function createTouchButton(parent: Instance, text: string, size: UDim2, position: UDim2): TextButton
+function Input.getDirs(): { string }
+    local ordered = {}
+    for _, source in pairs(sources) do
+        table.insert(ordered, source)
+    end
+    table.sort(ordered, function(a, b)
+        return a.order < b.order
+    end)
+
+    local dirs = {}
+    local seen = {}
+    for _, source in ipairs(ordered) do
+        if not seen[source.direction] then
+            seen[source.direction] = true
+            table.insert(dirs, source.direction)
+        end
+    end
+    return dirs
+end
+
+function Input.setEnabled(value: boolean)
+    enabled = value
+    if not enabled then
+        clearSources()
+    end
+end
+
+function Input.setControlsVisible(visible: boolean)
+    if controls then
+        controls.Visible = visible
+    end
+end
+
+local function stickDirection(position: Vector3): string?
+    local x = position.X
+    local y = -position.Y
+    if math.abs(x) >= math.abs(y) then
+        if x > 0.35 then
+            return "right"
+        elseif x < -0.35 then
+            return "left"
+        end
+    else
+        if y > 0.35 then
+            return "down"
+        elseif y < -0.35 then
+            return "up"
+        end
+    end
+    return nil
+end
+
+---------------------------------------------------------------- 触屏按键
+
+local function makeButton(parent: Instance, text: string, size: number, position: UDim2): TextButton
     local button = Instance.new("TextButton")
-    button.Size = size
-    button.Position = position
+    button.Name = text
     button.AnchorPoint = Vector2.new(0.5, 0.5)
+    button.Position = position
+    button.Size = UDim2.fromOffset(size, size)
     button.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-    button.BackgroundTransparency = 0.7
-    button.Font = Enum.Font.GothamBold
-    button.TextSize = 28
-    button.TextColor3 = Color3.new(1, 1, 1)
-    button.Text = text
+    button.BackgroundTransparency = 0.72
+    button.BorderSizePixel = 0
     button.AutoButtonColor = true
+    button.Font = Enum.Font.GothamBold
+    button.Text = text
+    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    button.TextSize = math.floor(size * 0.4)
+    button.TextTransparency = 0.05
     button.Parent = parent
 
     local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0.3, 0)
+    corner.CornerRadius = UDim.new(0.5, 0)
     corner.Parent = button
+
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = 0.55
+    stroke.Thickness = 1.5
+    stroke.Parent = button
 
     return button
 end
 
-local function bindHold(button: TextButton, x: number, z: number)
-    local function release()
-        touchHeld[button] = nil
-    end
-
+local function bindTouchHold(button: TextButton, direction: string)
+    local sourceName = "touch_" .. button.Name .. "_" .. tostring(button)
     button.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch
             or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            touchHeld[button] = { x, z }
-
-            -- 手指滑出按钮范围再抬起时，也能正确松开
-            input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    release()
-                end
-            end)
+            if enabled then
+                setSource(sourceName, direction)
+            end
         end
     end)
-
     button.InputEnded:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.Touch
             or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            release()
+            setSource(sourceName, nil)
         end
+    end)
+    button.MouseLeave:Connect(function()
+        setSource(sourceName, nil)
     end)
 end
 
 local function createTouchControls(gui: ScreenGui)
+    local frame = Instance.new("Frame")
+    frame.Name = "TouchControls"
+    frame.BackgroundTransparency = 1
+    frame.Size = UDim2.fromScale(1, 1)
+    frame.ZIndex = 50000
+    frame.Visible = false
+    frame.Parent = gui
+    controls = frame
+
+    local padSize = 190
+    local dx, dy = 24 + padSize / 2, -24 - padSize / 2
     local pad = Instance.new("Frame")
     pad.Name = "DPad"
     pad.AnchorPoint = Vector2.new(0, 1)
-    pad.Position = UDim2.new(0, 24, 1, -24)
-    pad.Size = UDim2.fromOffset(190, 190)
+    pad.Position = UDim2.new(0, dx - padSize / 2, 1, dy + padSize / 2)
+    pad.Size = UDim2.fromOffset(padSize, padSize)
     pad.BackgroundTransparency = 1
-    pad.Parent = gui
+    pad.ZIndex = 50001
+    pad.Parent = frame
 
-    local buttonSize = UDim2.fromOffset(62, 62)
-    bindHold(createTouchButton(pad, "▲", buttonSize, UDim2.fromOffset(95, 31)), 0, -1)
-    bindHold(createTouchButton(pad, "▼", buttonSize, UDim2.fromOffset(95, 159)), 0, 1)
-    bindHold(createTouchButton(pad, "◀", buttonSize, UDim2.fromOffset(31, 95)), -1, 0)
-    bindHold(createTouchButton(pad, "▶", buttonSize, UDim2.fromOffset(159, 95)), 1, 0)
+    local buttonSize = 58
+    local up = makeButton(pad, "▲", buttonSize, UDim2.fromOffset(padSize / 2, 29))
+    local down = makeButton(pad, "▼", buttonSize, UDim2.fromOffset(padSize / 2, padSize - 29))
+    local left = makeButton(pad, "◀", buttonSize, UDim2.fromOffset(29, padSize / 2))
+    local right = makeButton(pad, "▶", buttonSize, UDim2.fromOffset(padSize - 29, padSize / 2))
+    bindTouchHold(up, "up")
+    bindTouchHold(down, "down")
+    bindTouchHold(left, "left")
+    bindTouchHold(right, "right")
 
-    local bomb = createTouchButton(gui, "泡泡", UDim2.fromOffset(110, 110), UDim2.new(1, -90, 1, -90))
-    bomb.BackgroundColor3 = Color3.fromRGB(120, 200, 255)
-    bomb.BackgroundTransparency = 0.35
-    bomb.Activated:Connect(function()
-        Input.BombPressed:Fire()
+    local bubble = makeButton(frame, "泡泡", 88, UDim2.new(1, -82, 1, -86))
+    bubble.BackgroundColor3 = Color3.fromRGB(120, 200, 255)
+    bubble.TextSize = 24
+    bubble.ZIndex = 50002
+    bubble.Activated:Connect(function()
+        if enabled then
+            Input.placePressed:Fire()
+        end
+    end)
+
+    local item = makeButton(frame, "道具", 64, UDim2.new(1, -154, 1, -154))
+    item.BackgroundColor3 = Color3.fromRGB(240, 170, 90)
+    item.TextSize = 20
+    item.ZIndex = 50002
+    item.Activated:Connect(function()
+        if enabled then
+            Input.usePressed:Fire()
+        end
     end)
 end
 
@@ -143,33 +223,50 @@ function Input.init(gui: ScreenGui)
             return
         end
 
-        if MOVE_KEYS[input.KeyCode] then
-            held[input.KeyCode] = true
-        elseif BOMB_KEYS[input.KeyCode] then
-            Input.BombPressed:Fire()
+        local direction = MOVE_KEYS[input.KeyCode]
+        if direction then
+            if enabled then
+                setSource("key_" .. input.KeyCode.Name, direction)
+            end
+            return
         end
-    end)
 
-    UserInputService.InputEnded:Connect(function(input)
-        -- 松开永远处理（即使按下时被聊天框等占用）
-        held[input.KeyCode] = nil
-    end)
-
-    UserInputService.InputChanged:Connect(function(input)
-        if input.KeyCode == Enum.KeyCode.Thumbstick1 then
-            local position = input.Position
-            if position.Magnitude < STICK_DEADZONE then
-                stickX, stickZ = 0, 0
-            else
-                stickX, stickZ = position.X, -position.Y
+        if PLACE_KEYS[input.KeyCode] then
+            if enabled then
+                Input.placePressed:Fire()
+            end
+        elseif USE_KEYS[input.KeyCode] then
+            if enabled then
+                Input.usePressed:Fire()
             end
         end
     end)
 
-    -- 切走窗口时别让按键"卡住"
+    UserInputService.InputEnded:Connect(function(input)
+        local direction = MOVE_KEYS[input.KeyCode]
+        if direction then
+            setSource("key_" .. input.KeyCode.Name, nil)
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if input.KeyCode == Enum.KeyCode.Thumbstick1 then
+            if enabled then
+                local direction = stickDirection(input.Position)
+                local previous = sources.gamepad_stick
+                if direction then
+                    if not previous or previous.direction ~= direction then
+                        setSource("gamepad_stick", direction)
+                    end
+                elseif previous then
+                    setSource("gamepad_stick", nil)
+                end
+            end
+        end
+    end)
+
     UserInputService.WindowFocusReleased:Connect(function()
-        table.clear(held)
-        stickX, stickZ = 0, 0
+        clearSources()
     end)
 
     if UserInputService.TouchEnabled then

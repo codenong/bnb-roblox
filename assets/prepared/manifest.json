@@ -1,0 +1,729 @@
+{
+  "version": 1,
+  "source": "/Users/arrow/code/game/BnB/client/assets",
+  "images": {
+    "img_floor_checker": {
+      "file": "images/img_floor_checker.png",
+      "assetType": "Image",
+      "displayName": "BnB floor checker",
+      "width": 320,
+      "height": 320,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 320,
+      "frameHeight": 320
+    },
+    "img_box": {
+      "file": "images/img_box.png",
+      "assetType": "Image",
+      "displayName": "BnB soft box",
+      "width": 160,
+      "height": 192,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 160,
+      "frameHeight": 192
+    },
+    "img_crate": {
+      "file": "images/img_crate.png",
+      "assetType": "Image",
+      "displayName": "BnB crate",
+      "width": 160,
+      "height": 192,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 160,
+      "frameHeight": 192
+    },
+    "img_cannon": {
+      "file": "images/img_cannon.png",
+      "assetType": "Image",
+      "displayName": "BnB cannon",
+      "width": 160,
+      "height": 320,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 160,
+      "frameHeight": 320
+    },
+    "img_mast": {
+      "file": "images/img_mast.png",
+      "assetType": "Image",
+      "displayName": "BnB mast",
+      "width": 800,
+      "height": 960,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 800,
+      "frameHeight": 960
+    },
+    "img_explosion": {
+      "file": "images/img_explosion.png",
+      "assetType": "Image",
+      "displayName": "BnB explosion",
+      "width": 980,
+      "height": 350,
+      "cols": 14,
+      "rows": 5,
+      "frameWidth": 70,
+      "frameHeight": 70
+    },
+    "img_big_popo": {
+      "file": "images/img_big_popo.png",
+      "assetType": "Image",
+      "displayName": "BnB big bubble",
+      "width": 972,
+      "height": 108,
+      "cols": 9,
+      "rows": 1,
+      "frameWidth": 108,
+      "frameHeight": 108
+    },
+    "img_role1_die": {
+      "file": "images/img_role1_die.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao death",
+      "width": 792,
+      "height": 150,
+      "cols": 11,
+      "rows": 1,
+      "frameWidth": 72,
+      "frameHeight": 150
+    },
+    "img_role2_die": {
+      "file": "images/img_role2_die.png",
+      "assetType": "Image",
+      "displayName": "BnB pirate death",
+      "width": 924,
+      "height": 147,
+      "cols": 11,
+      "rows": 1,
+      "frameWidth": 84,
+      "frameHeight": 147
+    },
+    "img_anim_baobao_red": {
+      "file": "images/img_anim_baobao_red.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk red",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_baobao_blue": {
+      "file": "images/img_anim_baobao_blue.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk blue",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_baobao_green": {
+      "file": "images/img_anim_baobao_green.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk green",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_baobao_yellow": {
+      "file": "images/img_anim_baobao_yellow.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk yellow",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_baobao_purple": {
+      "file": "images/img_anim_baobao_purple.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk purple",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_baobao_orange": {
+      "file": "images/img_anim_baobao_orange.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao walk orange",
+      "width": 576,
+      "height": 512,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 96,
+      "frameHeight": 128
+    },
+    "img_anim_haidao_red": {
+      "file": "images/img_anim_haidao_red.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk red",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_anim_haidao_blue": {
+      "file": "images/img_anim_haidao_blue.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk blue",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_anim_haidao_green": {
+      "file": "images/img_anim_haidao_green.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk green",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_anim_haidao_yellow": {
+      "file": "images/img_anim_haidao_yellow.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk yellow",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_anim_haidao_purple": {
+      "file": "images/img_anim_haidao_purple.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk purple",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_anim_haidao_orange": {
+      "file": "images/img_anim_haidao_orange.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao walk orange",
+      "width": 672,
+      "height": 536,
+      "cols": 6,
+      "rows": 4,
+      "frameWidth": 112,
+      "frameHeight": 134
+    },
+    "img_popo_b0": {
+      "file": "images/img_popo_b0.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble b0",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_popo_b1": {
+      "file": "images/img_popo_b1.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble b1",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_popo_b2": {
+      "file": "images/img_popo_b2.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble b2",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_popo_r0": {
+      "file": "images/img_popo_r0.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble r0",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_popo_r1": {
+      "file": "images/img_popo_r1.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble r1",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_popo_r2": {
+      "file": "images/img_popo_r2.png",
+      "assetType": "Image",
+      "displayName": "BnB bubble r2",
+      "width": 176,
+      "height": 164,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 176,
+      "frameHeight": 164
+    },
+    "img_chars_baobao_red": {
+      "file": "images/img_chars_baobao_red.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait red",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_baobao_blue": {
+      "file": "images/img_chars_baobao_blue.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait blue",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_baobao_green": {
+      "file": "images/img_chars_baobao_green.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait green",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_baobao_yellow": {
+      "file": "images/img_chars_baobao_yellow.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait yellow",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_baobao_purple": {
+      "file": "images/img_chars_baobao_purple.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait purple",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_baobao_orange": {
+      "file": "images/img_chars_baobao_orange.png",
+      "assetType": "Image",
+      "displayName": "BnB baobao portrait orange",
+      "width": 180,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 180,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_red": {
+      "file": "images/img_chars_haidao_red.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait red",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_blue": {
+      "file": "images/img_chars_haidao_blue.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait blue",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_green": {
+      "file": "images/img_chars_haidao_green.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait green",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_yellow": {
+      "file": "images/img_chars_haidao_yellow.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait yellow",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_purple": {
+      "file": "images/img_chars_haidao_purple.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait purple",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_chars_haidao_orange": {
+      "file": "images/img_chars_haidao_orange.png",
+      "assetType": "Image",
+      "displayName": "BnB haidao portrait orange",
+      "width": 232,
+      "height": 224,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 232,
+      "frameHeight": 224
+    },
+    "img_gift1": {
+      "file": "images/img_gift1.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift1",
+      "width": 504,
+      "height": 180,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 180
+    },
+    "img_gift2": {
+      "file": "images/img_gift2.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift2",
+      "width": 504,
+      "height": 180,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 180
+    },
+    "img_gift3": {
+      "file": "images/img_gift3.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift3",
+      "width": 504,
+      "height": 180,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 180
+    },
+    "img_gift6": {
+      "file": "images/img_gift6.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift6",
+      "width": 504,
+      "height": 184,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 184
+    },
+    "img_gift7": {
+      "file": "images/img_gift7.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift7",
+      "width": 432,
+      "height": 152,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 144,
+      "frameHeight": 152
+    },
+    "img_gift8": {
+      "file": "images/img_gift8.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift8",
+      "width": 432,
+      "height": 164,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 144,
+      "frameHeight": 164
+    },
+    "img_gift9": {
+      "file": "images/img_gift9.png",
+      "assetType": "Image",
+      "displayName": "BnB item Gift9",
+      "width": 480,
+      "height": 164,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 160,
+      "frameHeight": 164
+    },
+    "img_item_gremlin": {
+      "file": "images/img_item_gremlin.png",
+      "assetType": "Image",
+      "displayName": "BnB gremlin",
+      "width": 168,
+      "height": 180,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 180
+    },
+    "img_item_devil": {
+      "file": "images/img_item_devil.png",
+      "assetType": "Image",
+      "displayName": "BnB devil",
+      "width": 168,
+      "height": 180,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 168,
+      "frameHeight": 180
+    },
+    "img_item_needle": {
+      "file": "images/img_item_needle.png",
+      "assetType": "Image",
+      "displayName": "BnB needle",
+      "width": 112,
+      "height": 116,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 112,
+      "frameHeight": 116
+    },
+    "img_item_remote": {
+      "file": "images/img_item_remote.png",
+      "assetType": "Image",
+      "displayName": "BnB remote",
+      "width": 136,
+      "height": 140,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 136,
+      "frameHeight": 140
+    },
+    "img_item_pirate_turtle": {
+      "file": "images/img_item_pirate_turtle.png",
+      "assetType": "Image",
+      "displayName": "BnB pirate turtle icon",
+      "width": 432,
+      "height": 164,
+      "cols": 3,
+      "rows": 1,
+      "frameWidth": 144,
+      "frameHeight": 164
+    },
+    "img_mount_turtle": {
+      "file": "images/img_mount_turtle.png",
+      "assetType": "Image",
+      "displayName": "BnB slow turtle",
+      "width": 384,
+      "height": 512,
+      "cols": 2,
+      "rows": 4,
+      "frameWidth": 192,
+      "frameHeight": 128
+    },
+    "img_mount_owl": {
+      "file": "images/img_mount_owl.png",
+      "assetType": "Image",
+      "displayName": "BnB owl",
+      "width": 320,
+      "height": 640,
+      "cols": 2,
+      "rows": 4,
+      "frameWidth": 160,
+      "frameHeight": 160
+    },
+    "img_mount_pirate_turtle": {
+      "file": "images/img_mount_pirate_turtle.png",
+      "assetType": "Image",
+      "displayName": "BnB pirate turtle",
+      "width": 384,
+      "height": 512,
+      "cols": 2,
+      "rows": 4,
+      "frameWidth": 192,
+      "frameHeight": 128
+    },
+    "img_mount_ufo": {
+      "file": "images/img_mount_ufo.png",
+      "assetType": "Image",
+      "displayName": "BnB UFO",
+      "width": 416,
+      "height": 496,
+      "cols": 2,
+      "rows": 4,
+      "frameWidth": 208,
+      "frameHeight": 124
+    },
+    "img_num_strip": {
+      "file": "images/img_num_strip.png",
+      "assetType": "Image",
+      "displayName": "BnB numbers",
+      "width": 480,
+      "height": 40,
+      "cols": 10,
+      "rows": 1,
+      "frameWidth": 48,
+      "frameHeight": 40
+    },
+    "img_win": {
+      "file": "images/img_win.png",
+      "assetType": "Image",
+      "displayName": "BnB win",
+      "width": 816,
+      "height": 280,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 816,
+      "frameHeight": 280
+    },
+    "img_draw": {
+      "file": "images/img_draw.png",
+      "assetType": "Image",
+      "displayName": "BnB draw",
+      "width": 816,
+      "height": 272,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 816,
+      "frameHeight": 272
+    },
+    "img_lose": {
+      "file": "images/img_lose.png",
+      "assetType": "Image",
+      "displayName": "BnB lose",
+      "width": 816,
+      "height": 280,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 816,
+      "frameHeight": 280
+    },
+    "img_shadow_gift": {
+      "file": "images/img_shadow_gift.png",
+      "assetType": "Image",
+      "displayName": "BnB item shadow",
+      "width": 36,
+      "height": 9,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 36,
+      "frameHeight": 9
+    },
+    "img_shadow_role": {
+      "file": "images/img_shadow_role.png",
+      "assetType": "Image",
+      "displayName": "BnB role shadow",
+      "width": 32,
+      "height": 15,
+      "cols": 1,
+      "rows": 1,
+      "frameWidth": 32,
+      "frameHeight": 15
+    }
+  },
+  "audio": {
+    "sfx_bomb_set": {
+      "file": "audio/sfx_bomb_set.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB bomb set"
+    },
+    "sfx_explode": {
+      "file": "audio/sfx_explode.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB explosion"
+    },
+    "sfx_get": {
+      "file": "audio/sfx_get.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB item get"
+    },
+    "sfx_save": {
+      "file": "audio/sfx_save.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB bubble save"
+    },
+    "sfx_role_die": {
+      "file": "audio/sfx_role_die.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB character death"
+    },
+    "sfx_start": {
+      "file": "audio/sfx_start.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB round start"
+    },
+    "sfx_victory": {
+      "file": "audio/sfx_victory.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB victory"
+    },
+    "sfx_lose": {
+      "file": "audio/sfx_lose.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB defeat"
+    },
+    "sfx_draw": {
+      "file": "audio/sfx_draw.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB draw"
+    },
+    "bgm_game": {
+      "file": "audio/bgm_game.ogg",
+      "assetType": "Audio",
+      "displayName": "BnB game music"
+    }
+  }
+}

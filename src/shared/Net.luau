@@ -1,11 +1,15 @@
 -- src/shared/Net.luau
--- 所有 Remote 的统一入口。服务端先调用 Net.init() 创建，客户端用 Net.get() 等待并获取。
+-- Remote protocol for BnB. Server calls Net.init() once before use; client uses
+-- Net.get() after the folder replicates.
 --
--- Input        C->S  RemoteEvent            (dirX, dirZ)  当前移动方向，变化时发送
--- PlaceBubble  C->S  RemoteEvent            (col, row)    请求在某格放泡泡
--- GameEvent    S->C  RemoteEvent            (name, ...)   可靠事件：回合状态、泡泡、爆炸、被困、死亡……
--- Snapshot     S->C  UnreliableRemoteEvent  (time, list)  玩家位置快照，丢包无所谓
--- GetSync      C->S  RemoteFunction         ()            客户端启动 / 晚加入时拉取完整状态
+-- Input        C->S RemoteEvent      dirs: {string}        oldest press first, newest last
+-- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
+-- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
+-- RoundState   S->C RemoteEvent      phase/roster/timers/yourId/grid/spawns
+-- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change)
+-- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues
+-- RoundEnd     S->C RemoteEvent      winnerId/name/char/colorIndex/duration/alive
+-- GetSync      C<=>S RemoteFunction  () -> full phase/roster/snapshot payload
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -14,31 +18,46 @@ local FOLDER_NAME = "BnBRemotes"
 
 local DEFINITIONS = {
     Input = "RemoteEvent",
-    PlaceBubble = "RemoteEvent",
-    GameEvent = "RemoteEvent",
-    Snapshot = "UnreliableRemoteEvent",
+    Action = "RemoteEvent",
+    SelectChar = "RemoteEvent",
+    RoundState = "RemoteEvent",
+    Snapshot = "RemoteEvent",
+    Fx = "RemoteEvent",
+    RoundEnd = "RemoteEvent",
     GetSync = "RemoteFunction",
 }
 
 local Net = {}
-
 local cache = {}
 
--- 仅服务端调用一次
-function Net.init()
-    assert(RunService:IsServer(), "Net.init 只能在服务端调用")
-
-    local folder = Instance.new("Folder")
-    folder.Name = FOLDER_NAME
-
-    for name, className in DEFINITIONS do
-        local remote = Instance.new(className)
+local function ensure(folder, name, className)
+    local remote = folder:FindFirstChild(name)
+    if remote and remote.ClassName ~= className then
+        remote:Destroy()
+        remote = nil
+    end
+    if not remote then
+        remote = Instance.new(className)
         remote.Name = name
         remote.Parent = folder
-        cache[name] = remote
+    end
+    return remote
+end
+
+-- Server only. Safe to call twice (reuses an existing folder).
+function Net.init()
+    assert(RunService:IsServer(), "Net.init is server-only")
+
+    local folder = ReplicatedStorage:FindFirstChild(FOLDER_NAME)
+    if not folder then
+        folder = Instance.new("Folder")
+        folder.Name = FOLDER_NAME
+        folder.Parent = ReplicatedStorage
     end
 
-    folder.Parent = ReplicatedStorage
+    for name, className in pairs(DEFINITIONS) do
+        cache[name] = ensure(folder, name, className)
+    end
 end
 
 function Net.get(name: string)
@@ -47,15 +66,21 @@ function Net.get(name: string)
         return remote
     end
 
+    assert(DEFINITIONS[name], string.format("unknown remote %q", name))
     local folder = ReplicatedStorage:WaitForChild(FOLDER_NAME)
     remote = folder:WaitForChild(name)
     cache[name] = remote
     return remote
 end
 
--- 服务端：向所有客户端广播一个可靠事件
-function Net.broadcast(eventName: string, ...)
-    Net.get("GameEvent"):FireAllClients(eventName, ...)
+function Net.broadcast(name: string, ...)
+    assert(RunService:IsServer(), "Net.broadcast is server-only")
+    Net.get(name):FireAllClients(...)
+end
+
+function Net.send(player: Player, name: string, ...)
+    assert(RunService:IsServer(), "Net.send is server-only")
+    Net.get(name):FireClient(player, ...)
 end
 
 return Net

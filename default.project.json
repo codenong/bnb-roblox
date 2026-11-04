@@ -24,25 +24,24 @@
       }
     },
 
+    "Players": {
+      "$properties": {
+        "CharacterAutoLoads": false
+      }
+    },
+
     "Workspace": {
-      "Baseplate": {
-        "$className": "Part",
-        "$properties": {
-          "Anchored": true,
-          "Color": [0.07, 0.08, 0.1],
-          "Locked": true,
-          "Position": [0, -11, 0],
-          "Size": [512, 20, 512]
-        }
+      "$properties": {
+        "StreamingEnabled": false
       }
     },
 
     "Lighting": {
       "$properties": {
-        "Ambient": [0.62, 0.62, 0.68],
-        "OutdoorAmbient": [0.62, 0.62, 0.68],
-        "Brightness": 1.6,
-        "ClockTime": 12,
+        "Ambient": [0.18, 0.2, 0.24],
+        "OutdoorAmbient": [0.18, 0.2, 0.24],
+        "Brightness": 0.6,
+        "ClockTime": 14,
         "GlobalShadows": false,
         "Technology": "Voxel"
       }
