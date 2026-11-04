@@ -57,3 +57,25 @@ cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (stubbed server)"
 "$LUAU" "$MATCH_BUILD/match_test.luau"
+
+# --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
+CLIENT_BUILD=build/client
+mkdir -p "$CLIENT_BUILD"
+{
+  printf 'local __env = require("./ClientEnv")\n'
+  printf 'local game, Instance, Enum, script = __env.game, __env.Instance, __env.Enum, __env.script\n'
+  sed -E \
+    -e 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
+    -e 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
+    ../src/client/Main.client.luau
+  # Main is a script (returns nothing); give the test copy a return value so require() accepts it.
+  printf '\nreturn true\n'
+} > "$CLIENT_BUILD/Main.luau"
+cp ../src/client/Interpolation.luau "$CLIENT_BUILD/Interpolation.luau"
+cp client/ClientEnv.luau client/Stubs.luau client/client_test.luau testlib.luau "$CLIENT_BUILD/"
+for name in Board Hud Input Audio Renderer Net; do
+  printf 'return require("./Stubs").%s\n' "$name" > "$CLIENT_BUILD/$name.luau"
+done
+
+echo "== client_test.luau (Main.client with stubs)"
+"$LUAU" "$CLIENT_BUILD/client_test.luau"

@@ -12,10 +12,14 @@ const STUDIO = path.join(ROOT, "tools", "studio_asset_ids.json");
 const OUT = path.join(ROOT, "src", "shared", "AssetIds.luau");
 
 function readJson(file, fallback) {
+  if (!fs.existsSync(file)) return fallback;
   try {
     return JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {
-    return fallback;
+  } catch (error) {
+    // 文件存在但不是合法 JSON（例如末尾多了逗号）：必须报错，
+    // 否则会被当成"没有任何 ID"，悄悄生成一份全空的 AssetIds.luau。
+    console.error(`invalid JSON in ${path.relative(ROOT, file)}: ${error.message}`);
+    process.exit(1);
   }
 }
 

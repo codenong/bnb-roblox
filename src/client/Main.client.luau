@@ -70,6 +70,14 @@ local function applySnapshot(snapshot)
     if type(snapshot) ~= "table" then
         return
     end
+
+    -- 地图 grid 只在变化时随快照下发一次，必须在收到的这一刻就应用。
+    -- 不能留到渲染时再从"当前快照"里取：同一帧里连收两个快照（掉帧、网络抖动后的
+    -- 突发）时，带 grid 的那个会变成"上一个快照"而被跳过，被炸掉的箱子会一直留在画面上。
+    if snapshot.grid then
+        Board.setGrid(snapshot.grid)
+    end
+
     lastSnapshot = snapshot
     interp:push(snapshot)
     Hud.applySnapshot(snapshot)

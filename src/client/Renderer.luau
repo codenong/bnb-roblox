@@ -965,9 +965,7 @@ function Renderer.update(previous, current, alpha, now, warmup)
         return
     end
 
-    if current.grid then
-        Board.setGrid(current.grid)
-    end
+    -- 地图 grid 由 Main.client 在收到快照时应用（见 applySnapshot），这里只负责滑动中的箱子。
     Board.setSliding(current.crateSlides or {})
 
     local previousPlayers = {}

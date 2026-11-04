@@ -72,7 +72,7 @@ node tools/verify_assets.mjs
 - `assets/prepared/manifest.json`（key、帧信息、尺寸）
 - `tools/studio_asset_ids.json`（手动上传路径的 ID 模板）
 
-生成后的资源 ID 最终写入 `src/shared/AssetIds.luau`。**当前所有 ID 为空，客户端使用降级画面。**
+生成后的资源 ID 最终写入 `src/shared/AssetIds.luau`（带 `rbxassetid://` 前缀，由脚本生成，不要手改）。**当前 71 个资源 ID 已全部填入**；任何一项为空时，客户端会对该项自动降级。
 
 ### 路径 A：Open Cloud 自动上传（推荐，可重复）
 
@@ -116,7 +116,7 @@ node tools/gen_asset_ids.mjs
 1. Studio → **View → Asset Manager → Images**，**Bulk Import** `assets/prepared/images`（单批最多 50 个，61 张分两批）。
 2. **Audio** 标签页导入 `assets/prepared/audio`（10 个 OGG）。
 3. 等待审核通过后，右键资产 → **Copy ID**。
-4. 把 ID 填进 `tools/studio_asset_ids.json`（键名与文件名一致，例如 `img_box`、`sfx_explode`；可以只填数字，工具会补 `rbxassetid://`）。
+4. 把 ID 填进 `tools/studio_asset_ids.json`（键名与文件名一致，例如 `img_box`、`sfx_explode`；可以只填数字，工具会补 `rbxassetid://`）。注意这必须是合法 JSON（最后一项后面不能有逗号），否则 `gen_asset_ids.mjs` 会报错退出。
 5. 生成：
 
 ```bash
@@ -158,5 +158,5 @@ assets/       prepared 输出与上传缓存（.cache 不提交）
 ## 开发状态
 
 - 共享引擎与服务端状态机通过 285 项 headless 测试；客户端画布/渲染/HUD/输入/音频已接线。
-- 尚未完成：Studio 实机全流程验证、真实素材上传（`AssetIds` 全空）、手机/手柄实机测试。
+- 尚未完成：手机/手柄实机测试，以及多客户端联机的完整验证。素材 ID 已填入，需在 Studio 里确认图片和音频都能正常加载。
 - 上传素材属于外发操作；请在明确确认后再运行上传命令。
