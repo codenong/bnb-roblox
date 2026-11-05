@@ -11,23 +11,41 @@ local PlayerService = {}
 local records: { [Player]: any } = {}
 local sequence = 0
 
-local function makeRecord(player: Player)
+local function makeRecord(player: Player, profile: any?)
+    local char = Characters.DEFAULT_CHAR
+    if type(profile) == "table" then
+        local settings = profile.settings
+        if type(settings) ~= "table" then
+            settings = {}
+            profile.settings = settings
+        end
+        if type(settings.char) == "string" and Characters.isValidChar(settings.char) then
+            char = settings.char
+        else
+            settings.char = Characters.DEFAULT_CHAR
+        end
+    end
+
     sequence += 1
     return {
         player = player,
         id = "u" .. tostring(player.UserId),
         name = player.DisplayName,
-        char = Characters.DEFAULT_CHAR,
+        char = char,
         order = sequence,
+        profile = profile,
     }
 end
 
-function PlayerService.add(player: Player)
+function PlayerService.add(player: Player, profile: any?)
     local existing = records[player]
     if existing then
+        if profile and existing.profile == nil then
+            existing.profile = profile
+        end
         return existing
     end
-    local record = makeRecord(player)
+    local record = makeRecord(player, profile)
     records[player] = record
     return record
 end
@@ -76,6 +94,14 @@ function PlayerService.setChar(player: Player, charId: any): boolean
         return false
     end
     record.char = charId
+    if type(record.profile) == "table" then
+        local settings = record.profile.settings
+        if type(settings) ~= "table" then
+            settings = {}
+            record.profile.settings = settings
+        end
+        settings.char = charId
+    end
     return true
 end
 

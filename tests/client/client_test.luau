@@ -73,4 +73,32 @@ fire("RoundState", { phase = "waiting", roundId = 3, roster = {}, grid = waiting
 fire("Snapshot", { grid = stray, players = {} })
 check("snapshots are ignored while waiting", Env.lastGrid == waitingGrid)
 
+---------------------------------------------------------------- 选角锁定：不向服务端发送无效请求
+do
+    local selectRemote = Env.remotes.SelectChar
+    local function picks()
+        return #selectRemote.sent
+    end
+
+    fire("RoundState", { phase = "waiting", roundId = 10, roster = {}, yourId = "u1", charLocked = false, grid = { "w" } })
+    local before = picks()
+    Env.signals.charSelected("haidao")
+    check("pick is sent while waiting and unlocked", picks() == before + 1, picks() - before)
+
+    fire("RoundState", { phase = "waiting", roundId = 10, roster = {}, yourId = "u1", charLocked = true, grid = { "w" } })
+    before = picks()
+    Env.signals.charSelected("baobao")
+    check("pick is not sent while locked", picks() == before, picks() - before)
+
+    fire("RoundState", { phase = "waiting", roundId = 10, roster = {}, yourId = "u1", charLocked = false, grid = { "w" } })
+    before = picks()
+    Env.signals.charSelected("baobao")
+    check("pick is sent again once unlocked", picks() == before + 1, picks() - before)
+
+    fire("RoundState", { phase = "playing", roundId = 11, roster = {}, yourId = "u1", charLocked = false, grid = { "p" } })
+    before = picks()
+    Env.signals.charSelected("haidao")
+    check("pick is not sent while playing", picks() == before, picks() - before)
+end
+
 TestLib.finish()

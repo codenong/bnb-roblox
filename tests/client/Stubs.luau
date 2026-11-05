@@ -3,8 +3,16 @@
 -- Board/Hud/Input/Audio/Renderer/Net.luau files that forward to the tables here.
 local Env = require("./ClientEnv")
 
-local function signal()
-    return { Event = { Connect = function() end } }
+-- Signals remember their handler so tests can fire them: Env.signals.charSelected(...)
+Env.signals = {}
+local function signal(name)
+    return {
+        Event = {
+            Connect = function(_, fn)
+                Env.signals[name] = fn
+            end,
+        },
+    }
 end
 
 local Stubs = {}
@@ -28,8 +36,8 @@ Stubs.Hud = {
     setState = function() end,
     applySnapshot = function() end,
     setMuted = function() end,
-    charSelected = signal(),
-    mutePressed = signal(),
+    charSelected = signal("charSelected"),
+    mutePressed = signal("mutePressed"),
 }
 
 Stubs.Input = {
@@ -39,8 +47,8 @@ Stubs.Input = {
     getDirs = function()
         return {}
     end,
-    placePressed = signal(),
-    usePressed = signal(),
+    placePressed = signal("placePressed"),
+    usePressed = signal("usePressed"),
 }
 
 Stubs.Audio = {

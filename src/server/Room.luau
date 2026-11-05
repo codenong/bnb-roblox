@@ -117,7 +117,12 @@ function Room.new(opts)
     self.fillBots = opts.fillBots ~= false
     self.waitingTicks = opts.waitingTicks or Constants.WAITING_TICKS
     self.resultsTicks = opts.resultsTicks or Constants.RESULTS_TICKS
+    -- Selection locks for the last charLockTicks of the waiting countdown. Capped
+    -- below the full countdown so a very short wait (tests, tuning) never starts
+    -- out locked.
+    self.charLockTicks = math.min(opts.charLockTicks or Constants.CHAR_LOCK_TICKS, self.waitingTicks - 1)
     self.random = opts.random or Random.new()
+    self.onSettled = opts.onSettled
 
     self.phase = "waiting"
     self.waitingLeft = self.waitingTicks
@@ -154,6 +159,15 @@ end
 
 function Room:getMode(): string
     return self.mode
+end
+
+-- True while the waiting countdown is inside its lock window. Not locked when the
+-- room is not counting down (e.g. a versus table that is not full yet).
+function Room:isCharLocked(): boolean
+    return self.phase == "waiting"
+        and #self.members > 0
+        and self.waitingLeft > 0
+        and self.waitingLeft <= self.charLockTicks
 end
 
 function Room:_send(record, name: string, payload: any)
@@ -200,6 +214,7 @@ function Room:_buildState(record)
         tile = Constants.TILE,
         selectedChar = if record then record.char else Characters.DEFAULT_CHAR,
         spectating = true,
+        charLocked = self:isCharLocked(),
         roomId = self.id,
         mode = self.mode,
         practice = self.mode == "practice",
@@ -454,6 +469,22 @@ function Room:finishRound()
     self.resultsLeft = self.resultsTicks
     self.snapshot:reset()
     self:broadcastState()
+
+    if self.onSettled then
+        local ok, err = pcall(
+            self.onSettled,
+            table.clone(self.members),
+            self.lastResult,
+            { roomId = self.id, mode = self.mode, roundId = self.roundId }
+        )
+        if not ok then
+            warn(string.format(
+                "[BnB] room %d settlement hook failed: %s",
+                self.id,
+                tostring(err)
+            ))
+        end
+    end
 end
 
 function Room:_stepWaiting()
@@ -470,6 +501,7 @@ function Room:_stepWaiting()
     end
 
     local before = math.ceil(self.waitingLeft / Constants.TICK_RATE)
+    local lockedBefore = self:isCharLocked()
     self.waitingLeft -= 1
 
     if self.waitingLeft <= 0 then
@@ -478,7 +510,7 @@ function Room:_stepWaiting()
     end
 
     local after = math.ceil(self.waitingLeft / Constants.TICK_RATE)
-    if after ~= before then
+    if after ~= before or self:isCharLocked() ~= lockedBefore then
         self:broadcastState()
     end
 end
@@ -589,6 +621,9 @@ end
 
 function Room:selectChar(record, charId: string): boolean
     if self.phase ~= "waiting" or not record or not self.memberById[record.id] then
+        return false
+    end
+    if self:isCharLocked() then
         return false
     end
     if not PlayerService.setChar(record.player, charId) then

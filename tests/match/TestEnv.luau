@@ -34,8 +34,15 @@ TestEnv.game = {
     end,
 }
 
+-- Every warn() is recorded. Tests that fail rooms on purpose set TestEnv.silent
+-- so the expected warnings do not look like real problems in the output.
+TestEnv.warnings = {}
+TestEnv.silent = false
 TestEnv.warn = function(message: any)
-    print("WARN: " .. tostring(message))
+    table.insert(TestEnv.warnings, tostring(message))
+    if not TestEnv.silent then
+        print("WARN: " .. tostring(message))
+    end
 end
 
 return TestEnv

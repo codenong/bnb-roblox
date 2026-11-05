@@ -15,6 +15,7 @@ end
 function Net.reset()
     sends = {}
     broadcasts = {}
+    Net.sendHook = nil
 end
 
 function Net.init() end
@@ -30,7 +31,13 @@ function Net.broadcast(name: string, _payload: any)
     broadcasts[name] = (broadcasts[name] or 0) + 1
 end
 
-function Net.send(player: any, name: string, _payload: any)
+-- Optional hook(player, name, payload); may throw to simulate a failing send.
+Net.sendHook = nil
+
+function Net.send(player: any, name: string, payload: any)
+    if Net.sendHook then
+        Net.sendHook(player, name, payload)
+    end
     local key = playerKey(player)
     sends[key] = sends[key] or {}
     sends[key][name] = (sends[key][name] or 0) + 1

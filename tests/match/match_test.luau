@@ -65,6 +65,16 @@ end
 MatchService.init()
 Net.reset()
 
+-- GetSync can arrive before the profile load has seated the player. It must not
+-- create a practice room or expose a half-loaded player.
+local unloadedPlayer = {
+    UserId = 5000,
+    DisplayName = "NotLoaded",
+}
+local unloadedSync = MatchService.getSync(unloadedPlayer)
+check("getSync is nil before the profile is loaded", unloadedSync == nil, unloadedSync)
+check("getSync does not create a room before seating", MatchService.getRoomCount() == 0, MatchService.getRoomCount())
+
 local alice = addPlayer("Alice")
 local bob = addPlayer("Bob")
 local aliceId = "u" .. tostring(alice.UserId)

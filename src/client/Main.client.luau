@@ -136,7 +136,8 @@ roundEndRemote.OnClientEvent:Connect(function(result)
 end)
 
 Hud.charSelected.Event:Connect(function(charId)
-    if currentState and currentState.phase == "waiting" then
+    -- The server rejects picks inside the lock window; do not even send them.
+    if currentState and currentState.phase == "waiting" and not currentState.charLocked then
         selectCharRemote:FireServer(charId)
     end
 end)

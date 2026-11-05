@@ -13,9 +13,21 @@ local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
 
 local MatchService = {}
 
+-- A room that throws is closed and its members are moved to a fresh room, so one
+-- bad room can never stop the others from stepping. To stop a deterministic bug
+-- from churning rooms forever, a player is re-seated at most MAX_RECYCLES times
+-- within RECYCLE_WINDOW_STEPS; after that they are left without a room (and the
+-- failure is logged) until they rejoin.
+local MAX_RECYCLES = 3
+local RECYCLE_WINDOW_STEPS = 30 * Constants.TICK_RATE
+
 local rooms = {}
 local roomByPlayer = {}
 local nextRoomId = 0
+local stepCount = 0
+local failures = {} -- [Player] = { count = n, firstStep = step }
+local scratch = {} -- reused per step: rooms are stepped from a stable copy
+local settlementHandler = nil
 
 local function createPracticeRoom(record)
     nextRoomId += 1
@@ -27,6 +39,7 @@ local function createPracticeRoom(record)
         waitingTicks = Constants.WAITING_TICKS,
         resultsTicks = Constants.RESULTS_TICKS,
         random = Random.new(),
+        onSettled = settlementHandler,
     })
     rooms[room.id] = room
     roomByPlayer[record.player] = room
@@ -34,18 +47,91 @@ local function createPracticeRoom(record)
     return room
 end
 
-function MatchService.init()
+function MatchService.init(opts)
+    opts = opts or {}
     rooms = {}
     roomByPlayer = {}
     nextRoomId = 0
+    stepCount = 0
+    failures = {}
+    table.clear(scratch)
+    settlementHandler = opts.onSettled
+end
+
+local function detachRoom(room)
+    rooms[room.id] = nil
+    for _, record in ipairs(room.members) do
+        if roomByPlayer[record.player] == room then
+            roomByPlayer[record.player] = nil
+        end
+    end
+end
+
+-- Counts a failure for this player; false once they have exceeded the budget.
+local function mayReseat(player: Player): boolean
+    local entry = failures[player]
+    if not entry or stepCount - entry.firstStep > RECYCLE_WINDOW_STEPS then
+        entry = { count = 0, firstStep = stepCount }
+        failures[player] = entry
+    end
+    entry.count += 1
+    return entry.count <= MAX_RECYCLES
+end
+
+local function recycleRoom(room, err)
+    warn(string.format(
+        "[BnB] room %d (%s, phase=%s) failed and was closed: %s",
+        room.id,
+        tostring(room.mode),
+        tostring(room.phase),
+        tostring(err)
+    ))
+
+    local members = table.clone(room.members)
+    detachRoom(room)
+
+    for _, record in ipairs(members) do
+        if mayReseat(record.player) then
+            local ok, seatErr = pcall(createPracticeRoom, record)
+            if not ok then
+                warn(string.format("[BnB] could not create a replacement room for %s: %s", record.id, tostring(seatErr)))
+                -- createPracticeRoom registers the room before addMember runs;
+                -- drop a half-built room so it cannot fail again every step.
+                local half = roomByPlayer[record.player]
+                if half then
+                    detachRoom(half)
+                    roomByPlayer[record.player] = nil
+                end
+            end
+        else
+            warn(string.format("[BnB] %s kept failing rooms; not reassigning until they rejoin", record.id))
+        end
+    end
 end
 
 function MatchService.step()
-    for id, room in pairs(rooms) do
-        if room:isEmpty() then
-            rooms[id] = nil
-        else
-            room:step()
+    stepCount += 1
+
+    -- Rooms are created and removed while recycling, so never iterate `rooms`
+    -- directly. Stepping in id order also keeps behaviour deterministic.
+    table.clear(scratch)
+    for _, room in pairs(rooms) do
+        table.insert(scratch, room)
+    end
+    table.sort(scratch, function(a, b)
+        return a.id < b.id
+    end)
+
+    for _, room in ipairs(scratch) do
+        if rooms[room.id] == room then
+            if room:isEmpty() then
+                rooms[room.id] = nil
+            else
+                local ok, err = pcall(room.step, room)
+                if not ok then
+                    recycleRoom(room, err)
+                end
+            end
         end
     end
 end
@@ -59,6 +145,7 @@ function MatchService.onPlayerAdded(player: Player)
 end
 
 function MatchService.onPlayerRemoving(player: Player, record)
+    failures[player] = nil
     local room = roomByPlayer[player]
     if not room then
         return

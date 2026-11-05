@@ -2,6 +2,8 @@
 -- Keyboard, gamepad and touch input. Direction order is oldest press first,
 -- newest press last; Game treats the last entry as the most recent direction.
 
+local ContextActionService = game:GetService("ContextActionService")
+local GuiService = game:GetService("GuiService")
 local UserInputService = game:GetService("UserInputService")
 
 local Input = {}
@@ -78,8 +80,25 @@ function Input.getDirs(): { string }
     return dirs
 end
 
+-- With a gamepad connected, Roblox auto-selects a visible GUI button and routes
+-- D-pad/A presses to GUI navigation. Those inputs then arrive with
+-- gameProcessedEvent = true, which InputBegan below deliberately ignores, so the
+-- gamepad would stop moving or placing bubbles. While a round is being played the
+-- gamepad belongs to the game; on the character-select screen navigation is
+-- turned back on so a gamepad can still pick a card.
+local function setGuiNavigation(on: boolean)
+    pcall(function()
+        GuiService.AutoSelectGuiEnabled = on
+        GuiService.GuiNavigationEnabled = on
+        if not on then
+            GuiService.SelectedObject = nil
+        end
+    end)
+end
+
 function Input.setEnabled(value: boolean)
     enabled = value
+    setGuiNavigation(not value)
     if not enabled then
         clearSources()
     end
@@ -108,6 +127,55 @@ local function stickDirection(position: Vector3): string?
         end
     end
     return nil
+end
+
+---------------------------------------------------------------- 方向键
+
+-- Roblox's default camera script binds the Left and Right arrow keys (and I/O)
+-- through ContextActionService to rotate the camera. Those presses reach
+-- UserInputService.InputBegan already marked as processed, which the handler in
+-- Input.init skips, so Left/Right did nothing while Up/Down (unclaimed) worked.
+-- The arrow keys are therefore claimed here with a higher-priority binding that
+-- sinks them; the camera never sees them and the game reads them directly.
+-- Typing in a TextBox still works: ContextActionService does not fire while one
+-- has focus.
+local ARROW_ACTION = "BnBArrowKeys"
+
+local function onArrowKey(_actionName: string, state: Enum.UserInputState, input: InputObject)
+    local direction = MOVE_KEYS[input.KeyCode]
+    if not direction then
+        return Enum.ContextActionResult.Pass
+    end
+
+    local source = "key_" .. input.KeyCode.Name
+    if state == Enum.UserInputState.Begin then
+        if enabled then
+            setSource(source, direction)
+        end
+    else
+        -- End, or Cancel when another binding takes the key away.
+        setSource(source, nil)
+    end
+    return Enum.ContextActionResult.Sink
+end
+
+local function claimArrowKeys()
+    local ok, err = pcall(function()
+        ContextActionService:BindActionAtPriority(
+            ARROW_ACTION,
+            onArrowKey,
+            false,
+            Enum.ContextActionPriority.High.Value,
+            Enum.KeyCode.Left,
+            Enum.KeyCode.Right,
+            Enum.KeyCode.Up,
+            Enum.KeyCode.Down
+        )
+    end)
+    if not ok then
+        -- InputBegan below still handles whatever the engine leaves unprocessed.
+        warn("[BnB] could not claim the arrow keys: " .. tostring(err))
+    end
 end
 
 ---------------------------------------------------------------- 触屏按键
@@ -218,12 +286,14 @@ end
 ---------------------------------------------------------------- 初始化
 
 function Input.init(gui: ScreenGui)
+    claimArrowKeys()
+
     UserInputService.InputBegan:Connect(function(input, processed)
+        local direction = MOVE_KEYS[input.KeyCode]
         if processed then
             return
         end
 
-        local direction = MOVE_KEYS[input.KeyCode]
         if direction then
             if enabled then
                 setSource("key_" .. input.KeyCode.Name, direction)

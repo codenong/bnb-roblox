@@ -22,6 +22,8 @@ local ACCENT = Color3.fromRGB(92, 198, 255)
 local TEXT = Color3.fromRGB(235, 246, 255)
 local SUBTLE = Color3.fromRGB(143, 177, 198)
 local GOLD = Color3.fromRGB(255, 215, 128)
+local LOCKED_VEIL = Color3.fromRGB(88, 92, 98) -- veil over unselected cards once locked
+local LOCKED_TINT = Color3.fromRGB(150, 150, 150) -- dims the portrait under the veil
 local DANGER = Color3.fromRGB(255, 104, 96)
 local SURVIVE = Color3.fromRGB(120, 226, 147)
 
@@ -536,15 +538,27 @@ local function buildWaiting()
         )
         selected.Visible = false
 
+        -- Grey veil shown on unselected cards once the selection is locked.
+        local mask = Instance.new("Frame")
+        mask.Name = "LockMask"
+        mask.Size = UDim2.fromScale(1, 1)
+        mask.BackgroundColor3 = LOCKED_VEIL
+        mask.BackgroundTransparency = 0.38
+        mask.BorderSizePixel = 0
+        mask.Visible = false
+        mask.Parent = card
+        round(mask, 0.05)
+
         waitingCards[char] = {
             card = card,
             stroke = stroke,
             portrait = portrait,
             fallback = fallback,
             selected = selected,
+            mask = mask,
         }
         card.Activated:Connect(function()
-            if state and state.phase == "waiting" then
+            if state and state.phase == "waiting" and not state.charLocked then
                 Hud.charSelected:Fire(char)
             end
         end)
@@ -604,6 +618,9 @@ local function buildWaiting()
         false
     )
     setZRecursive(waitingOverlay, 100000)
+    for _, entry in pairs(waitingCards) do
+        entry.mask.ZIndex = 100001
+    end
 end
 
 local function updateWaiting()
@@ -618,6 +635,7 @@ local function updateWaiting()
     local yourEntry = rosterById[state.yourId]
     local colorIndex = if yourEntry then yourEntry.colorIndex else 0
     local color = teamColor(colorIndex)
+    local locked = state.charLocked == true
     for char, entry in pairs(waitingCards) do
         local portraitKey = Sprites.portraitKey(char, colorIndex)
         local id = asset(portraitKey)
@@ -636,11 +654,15 @@ local function updateWaiting()
             end
         end
         local isSelected = char == (state.selectedChar or selectedChar)
+        local greyedOut = locked and not isSelected
         entry.selected.Visible = isSelected
         entry.stroke.Color = if isSelected then GOLD else Color3.fromRGB(55, 100, 124)
         entry.stroke.Thickness = if isSelected then 3 else 2
         entry.stroke.Transparency = if isSelected then 0.05 else 0.35
         entry.card.BackgroundColor3 = if isSelected then Color3.fromRGB(30, 60, 82) else PANEL_2
+        -- Locked: the unselected card is dimmed and veiled grey; the pick stays vivid.
+        entry.mask.Visible = greyedOut
+        entry.portrait.ImageColor3 = if greyedOut then LOCKED_TINT else Color3.new(1, 1, 1)
     end
 
     local maxPlayers = state.maxPlayers or Constants.MAX_PLAYERS
@@ -685,7 +707,9 @@ local function updateWaiting()
 
     if state.endsIn and state.endsIn > 0 then
         waitingCountdown.Text = string.format("%d 秒后开始", state.endsIn)
-        waitingHint.Text = if practice
+        waitingHint.Text = if locked
+            then "角色已锁定 · 即将开始"
+            elseif practice
             then "点击角色卡选择 · 击败 Bot 赢得对局"
             else "点击角色卡选择 · 开局后自动补 Bot"
     else

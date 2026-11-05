@@ -63,6 +63,9 @@ local Constants = {
     RESULTS_SECONDS = 4,
     WAITING_TICKS = 10 * 30,
     RESULTS_TICKS = 4 * 30,
+    -- Character selection locks for the last N seconds of the waiting countdown.
+    CHAR_LOCK_SECONDS = 3,
+    CHAR_LOCK_TICKS = 3 * 30,
 
     -- Rendering
     BOARD_WIDTH = 15 * 40,
