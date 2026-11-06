@@ -75,6 +75,33 @@ local unloadedSync = MatchService.getSync(unloadedPlayer)
 check("getSync is nil before the profile is loaded", unloadedSync == nil, unloadedSync)
 check("getSync does not create a room before seating", MatchService.getRoomCount() == 0, MatchService.getRoomCount())
 
+-- While Main is loading the profile it marks the player as loading, so the
+-- client gets a placeholder it can show instead of an empty screen.
+MatchService.setLoading(unloadedPlayer, true)
+local loadingSync = MatchService.getSync(unloadedPlayer)
+check("a loading player gets a loading placeholder", type(loadingSync) == "table" and loadingSync.phase == "loading", loadingSync and loadingSync.phase)
+check("the placeholder carries no round data", loadingSync ~= nil and loadingSync.roster == nil and loadingSync.roundId == nil)
+check("a loading player still gets no room", MatchService.getRoomCount() == 0, MatchService.getRoomCount())
+check("a loading player cannot act", MatchService.selectChar(unloadedPlayer, "haidao") == false)
+
+MatchService.setLoading(unloadedPlayer, false)
+check("clearing the flag goes back to nil", MatchService.getSync(unloadedPlayer) == nil)
+
+-- A player that leaves while loading must not stay marked as loading.
+MatchService.setLoading(unloadedPlayer, true)
+MatchService.onPlayerRemoving(unloadedPlayer, nil)
+check("leaving while loading clears the flag", MatchService.getSync(unloadedPlayer) == nil)
+
+-- Seating clears the loading flag even if Main forgot to: the real state wins.
+local seatedWhileLoading = addPlayer("Seated")
+MatchService.setLoading(seatedWhileLoading, true)
+MatchService.onPlayerAdded(seatedWhileLoading)
+local seatedSync = MatchService.getSync(seatedWhileLoading)
+check("a seated player gets real state, not the placeholder", seatedSync ~= nil and seatedSync.phase == "waiting", seatedSync and seatedSync.phase)
+local seatedRecord = PlayerService.get(seatedWhileLoading)
+PlayerService.remove(seatedWhileLoading)
+MatchService.onPlayerRemoving(seatedWhileLoading, seatedRecord)
+
 local alice = addPlayer("Alice")
 local bob = addPlayer("Bob")
 local aliceId = "u" .. tostring(alice.UserId)

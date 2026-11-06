@@ -93,7 +93,7 @@ do
     check("unknown inventory entry kept", normalized.inventory.extra.note == "kept")
     check("negative loadout clamps", normalized.loadout.needle == 0)
     check("negative stats clamp", normalized.stats.versus.games == 0)
-    check("progress clamps to free cap", normalized.freeNeedle.progress == ProfileSchema.FREE_NEEDLE_MAX)
+    check("progress clamps to the goal", normalized.freeNeedle.progress == ProfileSchema.FREE_NEEDLE_GOAL)
     check("non-string day becomes empty", normalized.freeNeedle.day == "")
     check("invalid character falls back", normalized.settings.char == "baobao")
     check("unknown top-level field kept", normalized.unknownTopLevel.keep == true)
@@ -105,6 +105,26 @@ do
     local valid = ProfileSchema.newProfile()
     valid.settings.char = "haidao"
     check("valid character is preserved", ProfileSchema.normalize(valid).settings.char == "haidao")
+end
+
+---------------------------------------------------------------- 免费针规则常量（与 detail.md 定稿一致）
+
+do
+    check("goal: 5 valid games per free needle", ProfileSchema.FREE_NEEDLE_GOAL == 5)
+    check("new players start at 2/5", ProfileSchema.FREE_NEEDLE_START_PROGRESS == 2)
+    check("daily cap is 3", ProfileSchema.FREE_NEEDLE_DAILY_CAP == 3)
+    check("stock cap is 4", ProfileSchema.FREE_NEEDLE_STOCK_CAP == 4)
+
+    check("start progress is below the goal", ProfileSchema.FREE_NEEDLE_START_PROGRESS < ProfileSchema.FREE_NEEDLE_GOAL)
+    check("a day's earnings fit in the stock cap", ProfileSchema.FREE_NEEDLE_DAILY_CAP <= ProfileSchema.FREE_NEEDLE_STOCK_CAP)
+    check("old ambiguous names are gone", ProfileSchema.FREE_NEEDLE_MAX == nil and ProfileSchema.FREE_NEEDLE_DAILY == nil)
+
+    local fresh = ProfileSchema.newProfile()
+    check("new profile starts at the start progress", fresh.freeNeedle.progress == ProfileSchema.FREE_NEEDLE_START_PROGRESS)
+    local missing = ProfileSchema.normalize({ freeNeedle = { progress = "bad" } })
+    check("invalid progress falls back to the start progress", missing.freeNeedle.progress == ProfileSchema.FREE_NEEDLE_START_PROGRESS, missing.freeNeedle.progress)
+    local zero = ProfileSchema.normalize({ freeNeedle = { progress = 0 } })
+    check("an explicit 0 is kept", zero.freeNeedle.progress == 0, zero.freeNeedle.progress)
 end
 
 TestLib.finish()

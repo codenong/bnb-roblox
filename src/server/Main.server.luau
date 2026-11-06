@@ -144,11 +144,15 @@ local function onPlayerAdded(player: Player)
     end
 
     loading[player] = true
+    -- Until the profile is loaded the client has no room to sync with; tell it so
+    -- it can show a loading screen (GetSync answers { phase = "loading" }).
+    MatchService.setLoading(player, true)
     task.spawn(function()
         local ok, profile, reason = pcall(function()
             return profiles:load(player)
         end)
         loading[player] = nil
+        MatchService.setLoading(player, false)
 
         if not ok then
             warn("[BnB] profile load crashed for " .. tostring(player.UserId) .. ": " .. tostring(profile))
@@ -184,6 +188,7 @@ end
 local function onPlayerRemoving(player: Player)
     departed[player] = true
     loading[player] = nil
+    MatchService.setLoading(player, false)
 
     local record = PlayerService.remove(player)
     if record then

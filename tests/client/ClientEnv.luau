@@ -126,6 +126,37 @@ function Env.installDefaultCamera()
     end, false, E.KeyCode.Left, E.KeyCode.Right, E.KeyCode.I, E.KeyCode.O)
 end
 
+-- task.spawn runs the function as a coroutine right away; task.wait suspends it
+-- until a test calls Env.advanceTasks(), which stands in for time passing.
+Env.waits = 0
+Env.threads = {}
+Env.task = {
+    spawn = function(fn, ...)
+        local thread = coroutine.create(fn)
+        table.insert(Env.threads, thread)
+        local ok, err = coroutine.resume(thread, ...)
+        if not ok then
+            error(err, 0)
+        end
+        return thread
+    end,
+    wait = function(seconds)
+        Env.waits += 1
+        coroutine.yield()
+        return seconds or 0
+    end,
+}
+function Env.advanceTasks()
+    for _, thread in ipairs(Env.threads) do
+        if coroutine.status(thread) == "suspended" then
+            local ok, err = coroutine.resume(thread)
+            if not ok then
+                error(err, 0)
+            end
+        end
+    end
+end
+
 local services = {
     Players = {
         LocalPlayer = {

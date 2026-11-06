@@ -88,6 +88,19 @@ local function applyState(newState)
         return
     end
 
+    if newState.phase == "loading" then
+        -- The server is still loading this player's profile, so there is no room
+        -- yet. Show the loading screen only. A placeholder must never replace a
+        -- real state that already arrived (events and GetSync answers can cross).
+        if currentState ~= nil and currentState.phase ~= "loading" then
+            return
+        end
+        currentState = newState
+        Hud.setState(newState)
+        setInputEnabled(false)
+        return
+    end
+
     local previous = currentState
     local reset = previous == nil
         or previous.roundId ~= newState.roundId
@@ -160,11 +173,37 @@ end)
 
 ---------------------------------------------------------------- 初始同步
 
-local ok, sync = pcall(function()
-    return getSyncRemote:InvokeServer()
-end)
-if ok and type(sync) == "table" then
-    applyState(sync)
+local LOADING_POLL_SECONDS = 1
+local LOADING_POLL_LIMIT = 60 -- the server gives up on a profile after about 7 s
+
+local function requestSync()
+    local ok, sync = pcall(function()
+        return getSyncRemote:InvokeServer()
+    end)
+    if ok and type(sync) == "table" then
+        applyState(sync)
+    end
+end
+
+requestSync()
+
+-- No usable state yet: the profile is still loading, or the answer was empty.
+-- Show the loading screen and keep asking until a real state arrives. The server
+-- also pushes the room state the moment the player is seated, so polling is only
+-- a safety net for an event that was missed or sent before this script listened.
+if currentState == nil then
+    applyState({ phase = "loading" })
+end
+if currentState.phase == "loading" then
+    task.spawn(function()
+        for _ = 1, LOADING_POLL_LIMIT do
+            task.wait(LOADING_POLL_SECONDS)
+            if currentState == nil or currentState.phase ~= "loading" then
+                return
+            end
+            requestSync()
+        end
+    end)
 end
 
 ---------------------------------------------------------------- 每帧

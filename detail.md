@@ -61,7 +61,7 @@
 
 ## 四、项目现状
 
-- 已修复：素材 ID 缺少 `rbxassetid://` 前缀、`studio_asset_ids.json` 的非法 JSON；"地图更新可能丢失"（`grid` 现在在收到快照时立即应用，并带回归测试）。当前 608 项测试通过。
+- 已修复：素材 ID 缺少 `rbxassetid://` 前缀、`studio_asset_ids.json` 的非法 JSON；"地图更新可能丢失"（`grid` 现在在收到快照时立即应用，并带回归测试）。当前 687 项测试通过。
 - M2 数据层已实现：版本化档案、DataStore 会话锁与 `lockId` fencing、同档案串行保存、免费/购买库存分桶；结算、离场、30 秒心跳和关服都会提交。Studio 实机验证需使用已发布测试体验并开启 **Studio Access to API Services**，步骤见 `README.md`。
 - Studio 里的 `AssetIds` 只是 Rojo 对磁盘文件的镜像，磁盘上的才是源头。用旧的 `.rbxlx` 或没连 `rojo serve`，Studio 会一直跑旧内容。
 - 原有的 6 人混战加 Bot 填充，按你的"只有两种模式"，我的理解是不再对外提供，引擎仍支持 N 人，不删。

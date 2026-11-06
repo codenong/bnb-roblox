@@ -35,12 +35,14 @@ PROFILE_BUILD=build/profile
 mkdir -p "$PROFILE_BUILD"
 cp build/ProfileSchema.luau "$PROFILE_BUILD/"
 cp ../src/server/ProfileStore.luau ../src/server/ProfileService.luau "$PROFILE_BUILD/"
-cp profile/FakeDataStore.luau profile/profile_schema_test.luau profile/profile_store_test.luau profile/profile_service_test.luau testlib.luau "$PROFILE_BUILD/"
+cp profile/FakeDataStore.luau profile/profile_schema_test.luau profile/profile_store_test.luau profile/profile_store_faults_test.luau profile/profile_service_test.luau testlib.luau "$PROFILE_BUILD/"
 
 echo "== profile_schema_test.luau (defaults, free/purchased stock, normalization)"
 "$LUAU" "$PROFILE_BUILD/profile_schema_test.luau"
 echo "== profile_store_test.luau (DataStore locks, retries, reload)"
 "$LUAU" "$PROFILE_BUILD/profile_store_test.luau"
+echo "== profile_store_faults_test.luau (lost responses, re-run transforms)"
+"$LUAU" "$PROFILE_BUILD/profile_store_faults_test.luau"
 echo "== profile_service_test.luau (load/commit/release/shutdown)"
 "$LUAU" "$PROFILE_BUILD/profile_service_test.luau"
 
@@ -82,7 +84,7 @@ CLIENT_BUILD=build/client
 mkdir -p "$CLIENT_BUILD"
 {
   printf 'local __env = require("./ClientEnv")\n'
-  printf 'local game, Instance, Enum, script = __env.game, __env.Instance, __env.Enum, __env.script\n'
+  printf 'local game, Instance, Enum, script, task = __env.game, __env.Instance, __env.Enum, __env.script, __env.task\n'
   sed -E \
     -e 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
     -e 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
@@ -91,13 +93,19 @@ mkdir -p "$CLIENT_BUILD"
   printf '\nreturn true\n'
 } > "$CLIENT_BUILD/Main.luau"
 cp ../src/client/Interpolation.luau "$CLIENT_BUILD/Interpolation.luau"
-cp client/ClientEnv.luau client/Stubs.luau client/client_test.luau testlib.luau "$CLIENT_BUILD/"
+cp client/ClientEnv.luau client/Stubs.luau client/client_test.luau client/client_loading_test.luau testlib.luau "$CLIENT_BUILD/"
 for name in Board Hud Input Audio Renderer Net; do
   printf 'return require("./Stubs").%s\n' "$name" > "$CLIENT_BUILD/$name.luau"
 done
 
 echo "== client_test.luau (Main.client with stubs)"
 "$LUAU" "$CLIENT_BUILD/client_test.luau"
+
+# Main runs once per process, so every startup scenario gets its own process.
+for scenario in event poll empty limit; do
+  echo "== client_loading_test.luau ($scenario)"
+  "$LUAU" "$CLIENT_BUILD/client_loading_test.luau" -a "$scenario"
+done
 
 # --- the real Input.luau with stubbed UserInputService / GuiService ---
 INPUT_BUILD=build/input

@@ -33,7 +33,10 @@ Stubs.Hud = {
     getBoardHost = function()
         return {}
     end,
-    setState = function() end,
+    setState = function(newState)
+        Env.hudStates = Env.hudStates or {}
+        table.insert(Env.hudStates, newState)
+    end,
     applySnapshot = function() end,
     setMuted = function() end,
     charSelected = signal("charSelected"),
@@ -42,7 +45,9 @@ Stubs.Hud = {
 
 Stubs.Input = {
     init = function() end,
-    setEnabled = function() end,
+    setEnabled = function(value)
+        Env.inputEnabled = value
+    end,
     setControlsVisible = function() end,
     getDirs = function()
         return {}
@@ -82,6 +87,7 @@ Stubs.Net = {
                 table.insert(self.sent, { ... })
             end
             function remote:InvokeServer()
+                self.invokes = (self.invokes or 0) + 1
                 return Env.syncResponse
             end
             Env.remotes[name] = remote

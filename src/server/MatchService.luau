@@ -27,6 +27,7 @@ local nextRoomId = 0
 local stepCount = 0
 local failures = {} -- [Player] = { count = n, firstStep = step }
 local scratch = {} -- reused per step: rooms are stepped from a stable copy
+local loadingPlayers = {} -- [Player] = true while their profile is still loading
 local settlementHandler = nil
 
 local function createPracticeRoom(record)
@@ -54,8 +55,16 @@ function MatchService.init(opts)
     nextRoomId = 0
     stepCount = 0
     failures = {}
+    loadingPlayers = {}
     table.clear(scratch)
     settlementHandler = opts.onSettled
+end
+
+-- Main marks a player as loading from PlayerAdded until the profile load ends
+-- (loaded, failed or cancelled). While marked, GetSync answers { phase = "loading" }
+-- so the client can show a loading screen instead of an empty one.
+function MatchService.setLoading(player: Player, loading: boolean)
+    loadingPlayers[player] = if loading then true else nil
 end
 
 local function detachRoom(room)
@@ -137,6 +146,7 @@ function MatchService.step()
 end
 
 function MatchService.onPlayerAdded(player: Player)
+    loadingPlayers[player] = nil
     local record = PlayerService.get(player)
     if not record or roomByPlayer[player] then
         return
@@ -146,6 +156,7 @@ end
 
 function MatchService.onPlayerRemoving(player: Player, record)
     failures[player] = nil
+    loadingPlayers[player] = nil
     local room = roomByPlayer[player]
     if not room then
         return
@@ -205,6 +216,9 @@ function MatchService.getSync(player: Player)
         end
     end
     if not room then
+        if loadingPlayers[player] then
+            return { phase = "loading" }
+        end
         return nil
     end
     return room:getSync(PlayerService.get(player))

@@ -57,6 +57,7 @@ local selfStatus
 local selfStats
 local playerRows = {}
 local waitingOverlay
+local loadingOverlay
 local waitingTitle
 local waitingSubtitle
 local waitingInfo
@@ -439,6 +440,45 @@ local function buildCompact()
 end
 
 ---------------------------------------------------------------- 等待 / 选角
+
+-- Shown while the server is still loading this player's saved profile, before any
+-- room exists. Covers the board area, same footprint as the waiting overlay.
+local function buildLoading()
+    loadingOverlay = newFrame(
+        stage,
+        "LoadingOverlay",
+        UDim2.fromOffset(600, 520),
+        UDim2.fromOffset(20, 64),
+        Color3.fromRGB(6, 18, 30),
+        0.08
+    )
+    loadingOverlay.ClipsDescendants = true
+    loadingOverlay.Visible = false
+    round(loadingOverlay, 0.015)
+    outline(loadingOverlay, Color3.fromRGB(54, 107, 132), 1.5, 0.45)
+
+    centeredLabel(
+        loadingOverlay,
+        "Title",
+        "正在加载数据…",
+        UDim2.fromOffset(600, 40),
+        UDim2.fromOffset(0, 214),
+        TEXT,
+        28,
+        true
+    )
+    centeredLabel(
+        loadingOverlay,
+        "Hint",
+        "正在读取你的存档，请稍候",
+        UDim2.fromOffset(600, 24),
+        UDim2.fromOffset(0, 264),
+        SUBTLE,
+        16,
+        false
+    )
+    setZRecursive(loadingOverlay, 100000)
+end
 
 local function buildWaiting()
     waitingOverlay = newFrame(
@@ -1263,6 +1303,10 @@ local function positionOverlays()
     local size = boardHost.Size
     waitingOverlay.Position = position
     waitingOverlay.Size = size
+    if loadingOverlay then
+        loadingOverlay.Position = position
+        loadingOverlay.Size = size
+    end
     countdownOverlay.Position = position
     countdownOverlay.Size = size
     resultOverlay.Position = position
@@ -1392,6 +1436,7 @@ function Hud.init(screenGui)
 
     buildSidebar()
     buildCompact()
+    buildLoading()
     buildWaiting()
     buildCountdown()
     buildResult()
@@ -1424,6 +1469,19 @@ function Hud.setState(newState)
     local previousPhase = state and state.phase
     state = newState
     selectedChar = state.selectedChar or selectedChar
+
+    if loadingOverlay then
+        loadingOverlay.Visible = state.phase == "loading"
+    end
+    if state.phase == "loading" then
+        -- No room, roster or board yet: show only the loading screen and leave
+        -- every round-related view hidden.
+        waitingOverlay.Visible = false
+        resultOverlay.Visible = false
+        hideCountdown()
+        layout()
+        return
+    end
 
     if state.phase == "waiting" then
         lastSnapshot = nil

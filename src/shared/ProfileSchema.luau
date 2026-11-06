@@ -7,8 +7,13 @@ local ProfileSchema = {}
 
 ProfileSchema.VERSION = 1
 ProfileSchema.ITEM_IDS = { "needle", "remote", "kick" }
-ProfileSchema.FREE_NEEDLE_MAX = 5
-ProfileSchema.FREE_NEEDLE_DAILY = 5
+
+-- Free needle rules. These are tuning knobs: change the numbers here, nothing
+-- else needs to know. The rules themselves are in detail.md.
+ProfileSchema.FREE_NEEDLE_GOAL = 5 -- valid versus games that earn one free needle
+ProfileSchema.FREE_NEEDLE_START_PROGRESS = 2 -- new players start at 2/5 (endowed progress)
+ProfileSchema.FREE_NEEDLE_DAILY_CAP = 3 -- free needles that can be earned per day
+ProfileSchema.FREE_NEEDLE_STOCK_CAP = 4 -- free needles that can be stored at once
 ProfileSchema.DEFAULT_CHAR = "baobao"
 
 local function isFiniteNumber(value: any): boolean
@@ -72,7 +77,7 @@ function ProfileSchema.newProfile(): any
             versus = { games = 0, wins = 0, losses = 0, draws = 0 },
         },
         freeNeedle = {
-            progress = 2,
+            progress = ProfileSchema.FREE_NEEDLE_START_PROGRESS,
             earnedToday = 0,
             day = "",
         },
@@ -134,7 +139,11 @@ function ProfileSchema.normalize(value: any): any
     result.stats = stats
 
     local freeNeedle = tableOrEmpty(result.freeNeedle)
-    freeNeedle.progress = boundedInt(freeNeedle.progress, 2, ProfileSchema.FREE_NEEDLE_MAX)
+    freeNeedle.progress = boundedInt(
+        freeNeedle.progress,
+        ProfileSchema.FREE_NEEDLE_START_PROGRESS,
+        ProfileSchema.FREE_NEEDLE_GOAL
+    )
     freeNeedle.earnedToday = nonNegativeInt(freeNeedle.earnedToday, 0)
     freeNeedle.day = if type(freeNeedle.day) == "string" then freeNeedle.day else ""
     result.freeNeedle = freeNeedle
