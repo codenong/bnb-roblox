@@ -163,7 +163,7 @@ function ProfileService:_schedule(state)
     end
 end
 
-function ProfileService:load(player)
+function ProfileService:_loadOnce(player)
     if self.shutting then
         return nil, "shutdown"
     end
@@ -225,6 +225,25 @@ function ProfileService:load(player)
     self.byUserId[player.UserId] = state
     self.active -= 1
     return state.data, nil
+end
+
+-- A fast rejoin creates a new Player object while the previous object's release
+-- is still queued or retrying. Wait for that release before reporting duplicate,
+-- otherwise the new client sits on the loading screen with no room to sync to.
+-- The caller decides how long to wait and what to do when the wait expires.
+function ProfileService:load(player, opts)
+    opts = opts or {}
+    local retries = math.max(0, math.floor(tonumber(opts.duplicateRetries) or 0))
+    local retrySeconds = math.max(0, tonumber(opts.duplicateRetrySeconds) or 0)
+
+    while true do
+        local profile, reason = self:_loadOnce(player)
+        if profile or reason ~= "duplicate" or retries <= 0 then
+            return profile, reason
+        end
+        retries -= 1
+        self.sleep(retrySeconds)
+    end
 end
 
 function ProfileService:getProfile(player)

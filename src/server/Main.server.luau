@@ -21,10 +21,13 @@ local MatchService = require(script.Parent:WaitForChild("MatchService"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
+local VersusStats = require(script.Parent:WaitForChild("VersusStats"))
 
 ---------------------------------------------------------------- 数据层
 
 local LOAD_FAILED_MESSAGE = "数据加载失败，请稍后再试（Studio 需开启 API 访问）。"
+local DUPLICATE_LOAD_RETRIES = 20
+local DUPLICATE_LOAD_RETRY_SECONDS = 0.5
 
 local function getProfileDataStore()
     local ok, store = pcall(function()
@@ -78,8 +81,16 @@ local profiles = ProfileService.new({
     end,
 })
 
-local function onSettled(members)
-    profiles:commitMany(members)
+-- Stats are applied before the commit so the profile worker persists them. The
+-- participant list (not the current roster) includes someone who left mid-round,
+-- which is exactly who needs the loss written.
+local function onSettled(members, result, context)
+    if context then
+        VersusStats.apply(context, result)
+        profiles:commitMany(context.participants or members)
+    else
+        profiles:commitMany(members)
+    end
 end
 
 MatchService.init({ onSettled = onSettled })
@@ -104,8 +115,24 @@ Net.get("SelectChar").OnServerEvent:Connect(function(player, charId)
     MatchService.selectChar(player, charId)
 end)
 
+-- "换桌" is a real seat exit, decided by the server. The old room cancels its
+-- countdown/settles as usual; the player remains roomless until choosing a mode.
+Net.get("LeaveTable").OnServerInvoke = function(player)
+    local ok, reason = MatchService.leaveTable(player)
+    return { ok = ok == true, reason = reason }
+end
+
 Net.get("GetSync").OnServerInvoke = function(player)
     return MatchService.getSync(player)
+end
+
+Net.get("GetTables").OnServerInvoke = function(_player)
+    return MatchService.getTables()
+end
+
+Net.get("JoinTable").OnServerInvoke = function(player, target)
+    local ok, reason, roomId = MatchService.join(player, target)
+    return { ok = ok == true, reason = reason, roomId = roomId }
 end
 
 ---------------------------------------------------------------- 玩家进出
@@ -113,6 +140,8 @@ end
 local function loadFailureMessage(reason: string?): string
     if reason == "locked" then
         return "该账号已在其他服务器登录，请稍后再试。"
+    elseif reason == "duplicate" then
+        return "账号数据正在同步，请稍后重新加入。"
     elseif reason == "newer_version" then
         return "存档版本过新，请更新游戏后再试。"
     elseif reason == "corrupt" then
@@ -147,9 +176,13 @@ local function onPlayerAdded(player: Player)
     -- Until the profile is loaded the client has no room to sync with; tell it so
     -- it can show a loading screen (GetSync answers { phase = "loading" }).
     MatchService.setLoading(player, true)
+    -- return
     task.spawn(function()
         local ok, profile, reason = pcall(function()
-            return profiles:load(player)
+            return profiles:load(player, {
+                duplicateRetries = DUPLICATE_LOAD_RETRIES,
+                duplicateRetrySeconds = DUPLICATE_LOAD_RETRY_SECONDS,
+            })
         end)
         loading[player] = nil
         MatchService.setLoading(player, false)
@@ -165,8 +198,7 @@ local function onPlayerAdded(player: Player)
                 return
             end
             if reason == "duplicate" then
-                warn("[BnB] duplicate profile load for " .. tostring(player.UserId))
-                return
+                warn("[BnB] profile still busy after the rejoin wait for " .. tostring(player.UserId))
             end
             kickIfOnline(player, loadFailureMessage(reason))
             return

@@ -108,21 +108,24 @@ for _ = 1, 4 do
 end
 local waitingA = roomA:getSync(alice)
 check("A returns to waiting", waitingA and waitingA.phase == "waiting", waitingA and waitingA.phase)
-check("spectator joins the next waiting roster", waitingA and #waitingA.roster == 2, waitingA and #waitingA.roster)
+check("the spectator is not added to the waiting roster", waitingA and #waitingA.roster == 1,
+    waitingA and #waitingA.roster)
+check("the spectator stays in the audience", roomA:getSync(cara).spectating == true)
 check("B still independent", roomB:getPhase() == "playing", roomB:getPhase())
 
 roomA:step()
 local nextA = roomA:getSync(alice)
 check("A starts the next round", nextA and nextA.phase == "playing", nextA and nextA.phase)
-check("next round uses both humans", nextA and #nextA.roster == 2 and countBots(nextA.roster) == 0,
+check("the next round fills the empty seat with a bot, not the spectator",
+    nextA and #nextA.roster == 2 and countBots(nextA.roster) == 1,
     nextA and #nextA.roster)
+check("the spectator still has no seat in the next round", roomA:getSync(cara).yourId == nil)
 
 ---------------------------------------------------------------- 成员清理
 
 roomA:removeMember(cara)
-local afterCara = roomA:getSync(alice)
-check("A ends after its spectator leaves a 1-human round", afterCara and afterCara.phase == "ended",
-    afterCara and afterCara.phase)
+check("a spectator leaving does not end the round", roomA:getPhase() == "playing", roomA:getPhase())
+check("the round continues after the spectator leaves", roomA:getSync(alice).roster ~= nil)
 check("B still playing", roomB:getPhase() == "playing", roomB:getPhase())
 roomA:removeMember(alice)
 roomB:removeMember(bob)

@@ -67,6 +67,21 @@ local Constants = {
     CHAR_LOCK_SECONDS = 3,
     CHAR_LOCK_TICKS = 3 * 30,
 
+    -- Versus tables. Tables are created lazily; this caps how many can exist at
+    -- once. Spectators are capped per table so a popular match cannot turn into
+    -- an unbounded snapshot fan-out.
+    VERSUS_PLAYERS = 2,
+    VERSUS_TABLES = 4,
+    VERSUS_SPECTATORS = 4,
+    -- A game must last this long to count toward versus stats. A round that ends
+    -- because a participant left is still a loss/win (quitting must not dodge it).
+    VERSUS_MIN_SECONDS = 15,
+    VERSUS_MIN_TICKS = 15 * 30,
+    -- No valid input or action for this long after the warmup forfeits the round
+    -- (and the round never counts toward stats).
+    VERSUS_NO_ACTION_SECONDS = 20,
+    VERSUS_NO_ACTION_TICKS = 20 * 30,
+
     -- Rendering
     BOARD_WIDTH = 15 * 40,
     BOARD_HEIGHT = 13 * 40,

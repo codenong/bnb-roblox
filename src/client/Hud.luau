@@ -14,6 +14,10 @@ local Hud = {}
 
 Hud.charSelected = Instance.new("BindableEvent")
 Hud.mutePressed = Instance.new("BindableEvent")
+Hud.loadingRetryPressed = Instance.new("BindableEvent")
+Hud.lobbyRequested = Instance.new("BindableEvent")
+-- Fired with "practice", "versus", or { mode = "versus", tableId = n }.
+Hud.tableSelected = Instance.new("BindableEvent")
 
 local PANEL = Color3.fromRGB(12, 27, 42)
 local PANEL_2 = Color3.fromRGB(18, 38, 57)
@@ -58,13 +62,21 @@ local selfStats
 local playerRows = {}
 local waitingOverlay
 local loadingOverlay
+local loadingTitle
+local loadingHint
+local loadingRetryButton
 local waitingTitle
 local waitingSubtitle
 local waitingInfo
 local waitingCountdown
 local waitingHint
+local waitingLobbyButton
 local waitingSlots = {}
 local waitingCards = {}
+local lobbyOverlay
+local lobbyStatus
+local lobbyTableRows = {}
+local lobbyTables = {}
 local countdownOverlay
 local countdownImage
 local countdownFallback
@@ -138,6 +150,25 @@ local function centeredLabel(parent, name, text, size, position, color, textSize
     local textLabel = label(parent, name, text, size, position, color, textSize, bold)
     textLabel.TextXAlignment = Enum.TextXAlignment.Center
     return textLabel
+end
+
+local function actionButton(parent, name, text, size, position, color)
+    local button = Instance.new("TextButton")
+    button.Name = name
+    button.Size = size
+    button.Position = position
+    button.BackgroundColor3 = color or PANEL_3
+    button.BackgroundTransparency = 0.05
+    button.BorderSizePixel = 0
+    button.AutoButtonColor = false
+    button.Font = Enum.Font.GothamBold
+    button.Text = text
+    button.TextColor3 = TEXT
+    button.TextSize = 12
+    button.Parent = parent
+    round(button, 0.35)
+    outline(button, Color3.fromRGB(76, 126, 151), 1, 0.4)
+    return button
 end
 
 local function setZRecursive(root, z)
@@ -292,7 +323,7 @@ local function buildSidebar()
     selfStats = label(
         selfCard,
         "Stats",
-        "下一局加入",
+        "观战只读",
         UDim2.new(1, -20, 0, 44),
         UDim2.fromOffset(10, 32),
         SUBTLE,
@@ -457,7 +488,7 @@ local function buildLoading()
     round(loadingOverlay, 0.015)
     outline(loadingOverlay, Color3.fromRGB(54, 107, 132), 1.5, 0.45)
 
-    centeredLabel(
+    loadingTitle = centeredLabel(
         loadingOverlay,
         "Title",
         "正在加载数据…",
@@ -467,7 +498,7 @@ local function buildLoading()
         28,
         true
     )
-    centeredLabel(
+    loadingHint = centeredLabel(
         loadingOverlay,
         "Hint",
         "正在读取你的存档，请稍候",
@@ -477,6 +508,26 @@ local function buildLoading()
         16,
         false
     )
+
+    loadingRetryButton = Instance.new("TextButton")
+    loadingRetryButton.Name = "RetryButton"
+    loadingRetryButton.Size = UDim2.fromOffset(140, 38)
+    loadingRetryButton.Position = UDim2.fromOffset(230, 316)
+    loadingRetryButton.BackgroundColor3 = ACCENT
+    loadingRetryButton.BackgroundTransparency = 0.1
+    loadingRetryButton.BorderSizePixel = 0
+    loadingRetryButton.AutoButtonColor = false
+    loadingRetryButton.Font = Enum.Font.GothamBold
+    loadingRetryButton.Text = "重试"
+    loadingRetryButton.TextColor3 = Color3.fromRGB(7, 21, 33)
+    loadingRetryButton.TextSize = 16
+    loadingRetryButton.Visible = false
+    loadingRetryButton.Parent = loadingOverlay
+    round(loadingRetryButton, 0.5)
+    outline(loadingRetryButton, Color3.fromRGB(160, 225, 255), 1, 0.35)
+    loadingRetryButton.Activated:Connect(function()
+        Hud.loadingRetryPressed:Fire()
+    end)
     setZRecursive(loadingOverlay, 100000)
 end
 
@@ -492,6 +543,18 @@ local function buildWaiting()
     waitingOverlay.ClipsDescendants = true
     round(waitingOverlay, 0.015)
     outline(waitingOverlay, Color3.fromRGB(54, 107, 132), 1.5, 0.45)
+
+    waitingLobbyButton = actionButton(
+        waitingOverlay,
+        "LobbyButton",
+        "换桌",
+        UDim2.fromOffset(64, 26),
+        UDim2.fromOffset(520, 16),
+        PANEL_3
+    )
+    waitingLobbyButton.Activated:Connect(function()
+        Hud.lobbyRequested:Fire()
+    end)
 
     local wipe = newFrame(
         waitingOverlay,
@@ -663,6 +726,218 @@ local function buildWaiting()
     end
 end
 
+-- GUI room browser. Practice always exists; versus tables are server-owned and
+-- listed on demand. The overlay is intentionally a flat list so it works on the
+-- same narrow layout as the waiting screen.
+local function buildLobby()
+    lobbyOverlay = newFrame(
+        stage,
+        "LobbyOverlay",
+        UDim2.fromOffset(600, 520),
+        UDim2.fromOffset(20, 64),
+        Color3.fromRGB(6, 18, 30),
+        0.03
+    )
+    lobbyOverlay.ClipsDescendants = true
+    lobbyOverlay.Visible = false
+    round(lobbyOverlay, 0.015)
+    outline(lobbyOverlay, Color3.fromRGB(54, 107, 132), 1.5, 0.35)
+
+    centeredLabel(lobbyOverlay, "Title", "选择玩法", UDim2.fromOffset(600, 30), UDim2.fromOffset(0, 14), TEXT, 22)
+    centeredLabel(
+        lobbyOverlay,
+        "Subtitle",
+        "已离开原房间 · 练习随时开始；对战桌子满 2 人后自动倒计时",
+        UDim2.fromOffset(600, 18),
+        UDim2.fromOffset(0, 44),
+        SUBTLE,
+        11,
+        false
+    )
+
+    local closeButton = actionButton(lobbyOverlay, "Close", "返回练习", UDim2.fromOffset(68, 24), UDim2.fromOffset(514, 12), PANEL_3)
+    closeButton.Activated:Connect(function()
+        -- There is no old room to return to: "换桌" has already left it.
+        Hud.tableSelected:Fire("practice")
+    end)
+    local refreshButton = actionButton(lobbyOverlay, "Refresh", "刷新", UDim2.fromOffset(56, 24), UDim2.fromOffset(448, 12), PANEL_3)
+    refreshButton.Activated:Connect(function()
+        lobbyStatus.Text = "正在刷新…"
+        Hud.lobbyRequested:Fire()
+    end)
+
+    local practiceButton = actionButton(
+        lobbyOverlay,
+        "Practice",
+        "",
+        UDim2.fromOffset(560, 52),
+        UDim2.fromOffset(20, 76),
+        Color3.fromRGB(25, 53, 72)
+    )
+    label(practiceButton, "Name", "练习模式", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 5), TEXT, 16)
+    label(
+        practiceButton,
+        "Detail",
+        "1v1 · 对战 Bot · 立即开始",
+        UDim2.fromOffset(360, 18),
+        UDim2.fromOffset(14, 28),
+        SUBTLE,
+        10,
+        false
+    )
+    label(practiceButton, "Go", "进入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 14), ACCENT, 12)
+    practiceButton.Activated:Connect(function()
+        Hud.tableSelected:Fire("practice")
+    end)
+
+    local quickButton = actionButton(
+        lobbyOverlay,
+        "QuickVersus",
+        "",
+        UDim2.fromOffset(560, 52),
+        UDim2.fromOffset(20, 134),
+        Color3.fromRGB(39, 57, 79)
+    )
+    label(quickButton, "Name", "快速对战", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 5), GOLD, 16)
+    label(
+        quickButton,
+        "Detail",
+        "优先补位等待中的桌子，否则新开一桌",
+        UDim2.fromOffset(420, 18),
+        UDim2.fromOffset(14, 28),
+        SUBTLE,
+        10,
+        false
+    )
+    label(quickButton, "Go", "加入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 14), ACCENT, 12)
+    quickButton.Activated:Connect(function()
+        Hud.tableSelected:Fire("versus")
+    end)
+
+    label(lobbyOverlay, "TablesTitle", "对战桌子", UDim2.fromOffset(300, 18), UDim2.fromOffset(22, 196), SUBTLE, 10)
+
+    for i = 1, Constants.VERSUS_TABLES do
+        local row = actionButton(
+            lobbyOverlay,
+            "TableRow" .. i,
+            "",
+            UDim2.fromOffset(560, 48),
+            UDim2.fromOffset(20, 218 + (i - 1) * 54),
+            PANEL_2
+        )
+        local name = label(row, "Name", "", UDim2.fromOffset(190, 22), UDim2.fromOffset(14, 5), TEXT, 13)
+        local detail = label(
+            row,
+            "Detail",
+            "",
+            UDim2.fromOffset(390, 16),
+            UDim2.fromOffset(14, 26),
+            SUBTLE,
+            9,
+            false
+        )
+        local join = label(row, "Join", "", UDim2.fromOffset(120, 22), UDim2.fromOffset(420, 13), ACCENT, 11)
+        join.TextXAlignment = Enum.TextXAlignment.Right
+        local entry = { row = row, name = name, detail = detail, join = join, data = nil }
+        lobbyTableRows[i] = entry
+        row.Visible = false
+        row.Activated:Connect(function()
+            local data = entry.data
+            if not data then
+                return
+            end
+            if not data.joinable then
+                Hud.setLobbyMessage("这张桌子已满，稍后再试")
+                return
+            end
+            Hud.tableSelected:Fire({ mode = "versus", tableId = data.id })
+        end)
+    end
+
+    lobbyStatus = centeredLabel(
+        lobbyOverlay,
+        "Status",
+        "",
+        UDim2.fromOffset(560, 20),
+        UDim2.fromOffset(20, 466),
+        SUBTLE,
+        10,
+        false
+    )
+    setZRecursive(lobbyOverlay, 110000)
+end
+
+local function phaseLabel(room)
+    if room.phase == "playing" then
+        return "对战中"
+    elseif room.phase == "ended" then
+        return "结算中"
+    elseif room.waitingForPlayers then
+        return "等待玩家"
+    end
+    return string.format("%d 秒后开始", room.endsIn or 0)
+end
+
+local function updateLobby()
+    if not lobbyOverlay or not lobbyOverlay.Visible then
+        return
+    end
+    for i, entry in ipairs(lobbyTableRows) do
+        local data = lobbyTables[i]
+        entry.data = data
+        if data then
+            entry.row.Visible = true
+            local seats = data.seats or {}
+            entry.name.Text = string.format("桌子 %d", data.id)
+            entry.name.TextColor3 = TEXT
+            entry.detail.Text = string.format(
+                "%s · %d/%d 座 · 观战 %d/%d",
+                phaseLabel(data),
+                data.seatCount or #seats,
+                data.maxPlayers or 2,
+                data.spectatorCount or 0,
+                data.maxSpectators or 0
+            )
+            local full = (data.seatCount or #seats) >= (data.maxPlayers or 2)
+            entry.join.Text = if full and data.joinable
+                then "观战"
+                elseif data.joinable then "加入"
+                else "已满"
+            entry.join.TextColor3 = if data.joinable then ACCENT else SUBTLE
+            entry.row.BackgroundTransparency = 0.05
+        else
+            entry.row.Visible = false
+        end
+    end
+    if #lobbyTables == 0 then
+        lobbyStatus.Text = "还没有对战桌子，进入快速对战即可开桌"
+    elseif lobbyStatus.Text == "正在刷新…" or lobbyStatus.Text == "正在读取桌子…" then
+        lobbyStatus.Text = ""
+    end
+end
+
+function Hud.setLobbyTables(tables)
+    lobbyTables = if type(tables) == "table" then tables else {}
+    updateLobby()
+end
+
+function Hud.setLobbyOpen(open: boolean)
+    if not lobbyOverlay then
+        return
+    end
+    lobbyOverlay.Visible = open == true
+    if lobbyOverlay.Visible then
+        lobbyStatus.Text = ""
+        updateLobby()
+    end
+end
+
+function Hud.setLobbyMessage(message: string?)
+    if lobbyStatus then
+        lobbyStatus.Text = message or ""
+    end
+end
+
 local function updateWaiting()
     if not waitingOverlay or not state then
         return
@@ -718,7 +993,12 @@ local function updateWaiting()
 
     waitingInfo.Text = if practice
         then string.format("练习模式  ·  真人 %d / %d  ·  Bot %d", real, maxPlayers, state.botFill or math.max(0, maxPlayers - real))
-        else string.format("真人 %d / %d  ·  Bot 补位 %d", real, maxPlayers, state.botFill or math.max(0, maxPlayers - real))
+        else string.format(
+            "对战  ·  真人 %d / %d  ·  观战 %d",
+            state.seatCount or real,
+            maxPlayers,
+            state.spectatorCount or 0
+        )
 
     for i = 1, 6 do
         local slot = waitingSlots[i]
@@ -739,22 +1019,29 @@ local function updateWaiting()
             else
                 slot.dot.BackgroundColor3 = Color3.fromRGB(80, 105, 120)
                 slot.dot.BackgroundTransparency = 0.2
-                slot.name.Text = if practice then "Bot 对手" else "Bot 补位"
+                slot.name.Text = if practice then "Bot 对手" else "等待玩家"
                 slot.name.TextColor3 = SUBTLE
             end
         end
     end
 
-    if state.endsIn and state.endsIn > 0 then
+    if not practice and state.spectating then
+        waitingCountdown.Text = if state.endsIn and state.endsIn > 0
+            then string.format("%d 秒后开始 · 观战", state.endsIn)
+            else "观战中 · 不参与对战"
+        waitingHint.Text = "观战只读，不会补位；想对战请换桌"
+    elseif state.endsIn and state.endsIn > 0 then
         waitingCountdown.Text = string.format("%d 秒后开始", state.endsIn)
         waitingHint.Text = if locked
             then "角色已锁定 · 即将开始"
             elseif practice
             then "点击角色卡选择 · 击败 Bot 赢得对局"
-            else "点击角色卡选择 · 开局后自动补 Bot"
+            else "点击角色卡选择 · 对战期间离开判负"
     else
-        waitingCountdown.Text = "等待玩家加入…"
-        waitingHint.Text = "第一名玩家加入后开始倒计时"
+        waitingCountdown.Text = if practice then "等待玩家加入…" else "等待另一名玩家…"
+        waitingHint.Text = if practice
+            then "第一名玩家加入后开始倒计时"
+            else "满 2 人后开始 10 秒倒计时"
     end
 end
 
@@ -1025,10 +1312,19 @@ local function showResult()
     if draw or not result.winnerChar then
         resultPortrait.Visible = false
         resultPortraitFallback.Visible = false
-        resultWinner.Text = "平局 · 无人存活"
+        resultWinner.Text = if result.reason == "timeout"
+            then "平局 · 超时"
+            elseif result.reason == "no_action"
+            then "平局 · 双方无操作"
+            else "平局 · 无人存活"
         resultWinner.TextColor3 = SUBTLE
     else
-        resultWinner.Text = "胜者  " .. (result.winnerName or "?")
+        local suffix = if result.reason == "leave"
+            then "  ·  对手离开"
+            elseif result.reason == "no_action"
+            then "  ·  对手无操作"
+            else ""
+        resultWinner.Text = "胜者  " .. (result.winnerName or "?") .. suffix
         resultWinner.TextColor3 = teamColor(result.winnerColorIndex or 0)
         local portraitKey = Sprites.portraitKey(result.winnerChar, result.winnerColorIndex or 0)
         local portraitId = asset(portraitKey)
@@ -1126,10 +1422,10 @@ local function updateRoster()
         else
             if state.phase == "waiting" then
                 row.row.Visible = true
-                row.name.Text = if practice then "Bot 对手" else "Bot 补位"
+                row.name.Text = if practice then "Bot 对手" else "等待玩家"
                 row.name.TextColor3 = SUBTLE
                 row.name.TextTransparency = 0.35
-                row.role.Text = if practice then "练习模式" else "自动匹配"
+                row.role.Text = if practice then "练习模式" else "空座待加入"
                 row.role.TextColor3 = SUBTLE
                 row.dot.BackgroundColor3 = Color3.fromRGB(80, 105, 120)
                 row.dot.BackgroundTransparency = 0.2
@@ -1156,8 +1452,8 @@ local function updateSelf()
         selfStatus.Text = "观战"
         selfStatus.TextColor3 = SUBTLE
         selfStats.Text = if state.phase == "waiting"
-            then "等待下一局开始"
-            else "本局观战 · 下一局加入"
+            then "观战只读 · 不参与对战"
+            else "本局观战 · 不参与对战"
         return
     end
 
@@ -1183,7 +1479,7 @@ local function updateSelf()
     if state.phase == "waiting" or not player then
         selfStats.Text = string.format("%s · 等待开局", charName(entry.char))
         if state.phase == "playing" then
-            selfStats.Text = "本局观战 · 下一局加入"
+            selfStats.Text = "本局观战 · 不参与对战"
         end
         return
     end
@@ -1263,7 +1559,7 @@ local function updateChrome()
         if not entry then
             compactStatus.Text = if state and state.phase == "waiting"
                 then "等待开局 · 点击角色卡选择"
-                else "观战中 · 下一局加入"
+                else "观战中 · 不参与对战"
         else
             local player = findPlayer(entry.id)
             local status = "准备"
@@ -1288,6 +1584,7 @@ local function updateAll()
     updateRoster()
     updateSelf()
     updateWaiting()
+    updateLobby()
     showResult()
     updateChrome()
     updateCountdown()
@@ -1306,6 +1603,10 @@ local function positionOverlays()
     if loadingOverlay then
         loadingOverlay.Position = position
         loadingOverlay.Size = size
+    end
+    if lobbyOverlay then
+        lobbyOverlay.Position = position
+        lobbyOverlay.Size = size
     end
     countdownOverlay.Position = position
     countdownOverlay.Size = size
@@ -1438,6 +1739,7 @@ function Hud.init(screenGui)
     buildCompact()
     buildLoading()
     buildWaiting()
+    buildLobby()
     buildCountdown()
     buildResult()
     layout()
@@ -1462,6 +1764,23 @@ function Hud.getBoardHost()
     return boardHost
 end
 
+-- The loading poll is a safety net. If it runs out before any state arrives,
+-- keep the overlay up but replace the spinner text with an actionable failure
+-- state instead of leaving the player waiting forever.
+function Hud.setLoadingTimedOut(timedOut: boolean)
+    if not loadingOverlay then
+        return
+    end
+    if timedOut then
+        loadingTitle.Text = "加载超时"
+        loadingHint.Text = "服务器暂时没有响应，请重试或重新加入"
+    else
+        loadingTitle.Text = "正在加载数据…"
+        loadingHint.Text = "正在读取你的存档，请稍候"
+    end
+    loadingRetryButton.Visible = timedOut == true
+end
+
 function Hud.setState(newState)
     if not newState then
         return
@@ -1472,6 +1791,12 @@ function Hud.setState(newState)
 
     if loadingOverlay then
         loadingOverlay.Visible = state.phase == "loading"
+    end
+    if state.phase ~= "loading" then
+        Hud.setLoadingTimedOut(false)
+    end
+    if state.phase ~= "waiting" then
+        Hud.setLobbyOpen(false)
     end
     if state.phase == "loading" then
         -- No room, roster or board yet: show only the loading screen and leave

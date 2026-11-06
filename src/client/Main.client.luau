@@ -44,6 +44,9 @@ local snapshotRemote = Net.get("Snapshot")
 local fxRemote = Net.get("Fx")
 local roundEndRemote = Net.get("RoundEnd")
 local getSyncRemote = Net.get("GetSync")
+local getTablesRemote = Net.get("GetTables")
+local joinTableRemote = Net.get("JoinTable")
+local leaveTableRemote = Net.get("LeaveTable")
 
 ---------------------------------------------------------------- 状态
 
@@ -52,6 +55,10 @@ local currentState = nil
 local lastSnapshot = nil
 local lastSentInput = nil
 local lastInputAt = 0
+-- True after "换桌" leaves the room and before a new mode is chosen. The server
+-- has no room for this player then, so a stale RoundState already in flight must
+-- not close the browser or make the board look like a live round.
+local browsing = false
 
 local function setInputEnabled(enabled)
     Input.setEnabled(enabled)
@@ -87,6 +94,9 @@ local function applyState(newState)
     if type(newState) ~= "table" or type(newState.phase) ~= "string" then
         return
     end
+    if browsing then
+        return
+    end
 
     if newState.phase == "loading" then
         -- The server is still loading this player's profile, so there is no room
@@ -103,6 +113,7 @@ local function applyState(newState)
 
     local previous = currentState
     local reset = previous == nil
+        or previous.roomId ~= newState.roomId
         or previous.roundId ~= newState.roundId
         or (previous.phase ~= "waiting" and newState.phase == "waiting")
 
@@ -174,7 +185,8 @@ end)
 ---------------------------------------------------------------- 初始同步
 
 local LOADING_POLL_SECONDS = 1
-local LOADING_POLL_LIMIT = 60 -- the server gives up on a profile after about 7 s
+local LOADING_POLL_LIMIT = 60 -- fallback only; the server kicks with a reason on its own timeout
+local loadingPolling = false
 
 local function requestSync()
     local ok, sync = pcall(function()
@@ -185,6 +197,95 @@ local function requestSync()
     end
 end
 
+local function isLoading()
+    return currentState == nil or currentState.phase == "loading"
+end
+
+local function startLoadingPoll()
+    if loadingPolling or not isLoading() then
+        return
+    end
+    loadingPolling = true
+    task.spawn(function()
+        for _ = 1, LOADING_POLL_LIMIT do
+            task.wait(LOADING_POLL_SECONDS)
+            if not isLoading() then
+                loadingPolling = false
+                return
+            end
+            requestSync()
+        end
+        loadingPolling = false
+        if isLoading() then
+            -- A lost RoundState plus a server that never answers GetSync would
+            -- otherwise leave the player on the loading screen forever.
+            Hud.setLoadingTimedOut(true)
+        end
+    end)
+end
+
+Hud.loadingRetryPressed.Event:Connect(function()
+    if isLoading() then
+        Hud.setLoadingTimedOut(false)
+        startLoadingPoll()
+    end
+end)
+
+---------------------------------------------------------------- 大厅 / 换桌
+
+local JOIN_ERRORS = {
+    not_loaded = "数据仍在加载，请稍后再试",
+    invalid_target = "无法进入该房间",
+    invalid_table = "桌子编号无效",
+    no_table = "这张桌子已经不存在",
+    no_tables = "暂时无法开新桌，请稍后再试",
+    table_full = "桌子已满，请换一张",
+    join_failed = "加入失败，请重试",
+}
+
+local function loadLobbyTables()
+    Hud.setLobbyMessage("正在读取桌子…")
+    local ok, tables = pcall(function()
+        return getTablesRemote:InvokeServer()
+    end)
+    if ok and type(tables) == "table" then
+        Hud.setLobbyTables(tables)
+    else
+        Hud.setLobbyMessage("读取桌子失败，请点刷新重试")
+    end
+end
+
+-- "换桌" leaves the current room before the browser appears. This is a
+-- server-side seat exit (the old countdown is cancelled or the round is
+-- forfeited as usual), not a paused timer. The player has no room until they
+-- choose practice or a versus table; leaving the browser means returning to a
+-- fresh practice room.
+Hud.lobbyRequested.Event:Connect(function()
+    local ok, result = pcall(function()
+        return leaveTableRemote:InvokeServer()
+    end)
+    if not ok or type(result) ~= "table" or not result.ok then
+        return
+    end
+    browsing = true
+    Hud.setLobbyOpen(true)
+    loadLobbyTables()
+end)
+
+Hud.tableSelected.Event:Connect(function(target)
+    local ok, result = pcall(function()
+        return joinTableRemote:InvokeServer(target)
+    end)
+    if not ok or type(result) ~= "table" or not result.ok then
+        local reason = if type(result) == "table" then result.reason else nil
+        Hud.setLobbyMessage(JOIN_ERRORS[reason] or "加入失败，请重试")
+        return
+    end
+    browsing = false
+    Hud.setLobbyOpen(false)
+    requestSync()
+end)
+
 requestSync()
 
 -- No usable state yet: the profile is still loading, or the answer was empty.
@@ -194,17 +295,7 @@ requestSync()
 if currentState == nil then
     applyState({ phase = "loading" })
 end
-if currentState.phase == "loading" then
-    task.spawn(function()
-        for _ = 1, LOADING_POLL_LIMIT do
-            task.wait(LOADING_POLL_SECONDS)
-            if currentState == nil or currentState.phase ~= "loading" then
-                return
-            end
-            requestSync()
-        end
-    end)
-end
+startLoadingPoll()
 
 ---------------------------------------------------------------- 每帧
 

@@ -3,7 +3,7 @@
 --   event  the real state arrives as a RoundState event
 --   poll   the event is missed; the poll loop finds the real state
 --   empty  GetSync answers nothing at all
---   limit  the state never arrives; polling must stop
+--   limit  the state never arrives; polling must stop and offer a retry
 local TestLib = require("./testlib")
 local Env = require("./ClientEnv")
 local check = TestLib.check
@@ -80,6 +80,20 @@ elseif scenario == "limit" then
     check("at most 60 polls after the first request", getSync().invokes <= 61, getSync().invokes)
     check("it did poll many times first", getSync().invokes >= 30, getSync().invokes)
     check("the loading screen is still up", lastHud().phase == "loading")
+    check("the failure state replaces the loading text", Env.loadingTimedOut == true)
+
+    -- The failure state offers a retry, which starts a fresh bounded poll.
+    local beforeRetry = getSync().invokes
+    local threadsBefore = #Env.threads
+    Env.syncResponse = realState
+    Env.signals.loadingRetryPressed()
+    check("retry clears the failure state", Env.loadingTimedOut == false)
+    check("retry starts a new poll loop", #Env.threads == threadsBefore + 1, #Env.threads)
+    Env.advanceTasks()
+    check("the retried poll found the real state", lastHud().phase == "waiting", lastHud().phase)
+    check("the retried poll asked the server", getSync().invokes == beforeRetry + 1, getSync().invokes - beforeRetry)
+    Env.advanceTasks()
+    check("the retried poll loop ends", coroutine.status(Env.threads[#Env.threads]) == "dead")
 
 else
     error("unknown scenario: " .. tostring(scenario))

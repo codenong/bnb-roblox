@@ -94,7 +94,7 @@ local function newService(store, opts)
         spawn = opts.spawn or function(fn)
             fn()
         end,
-        sleep = function(_seconds: number) end,
+        sleep = opts.sleep or function(_seconds: number) end,
         warn = function(_message: string) end,
         autoSaveSeconds = 30,
         shutdownSeconds = 1,
@@ -143,6 +143,69 @@ do
     check("release saves the latest data", store.saves[#store.saves].release == true)
     check("release writes the latest value", store.saves[#store.saves].currency == 4)
     check("release removes the loaded state", not service:isLoaded(player))
+end
+
+---------------------------------------------------------------- 快速重连：等待旧会话释放后再加载
+
+do
+    local store = newFakeStore()
+    local queue = newQueue()
+    local sleeps = 0
+    local service = newService(store, {
+        spawn = queue.spawn,
+        sleep = function(_seconds: number)
+            sleeps += 1
+            queue.drain()
+        end,
+    })
+
+    local oldPlayer = newPlayer(8, "Hana")
+    service:load(oldPlayer)
+    service:release(oldPlayer)
+
+    local rejoined = newPlayer(8, "Hana again")
+    local profile, reason = service:load(rejoined, {
+        duplicateRetries = 3,
+        duplicateRetrySeconds = 0,
+    })
+    check("a quick rejoin waits for the old release", profile ~= nil, reason)
+    check("the rejoin retried once", sleeps == 1, sleeps)
+    check("the old state is released", not service:isLoaded(oldPlayer))
+    check("the new player is loaded", service:isLoaded(rejoined))
+    check("the profile was loaded again", store.loads == 2, store.loads)
+end
+
+---------------------------------------------------------------- 快速重连：等待超时后如实失败，释放后仍可再加载
+
+do
+    local store = newFakeStore()
+    local queue = newQueue()
+    local sleeps = 0
+    local service = newService(store, {
+        spawn = queue.spawn,
+        sleep = function(_seconds: number)
+            sleeps += 1
+        end,
+    })
+
+    local oldPlayer = newPlayer(9, "Ivy")
+    service:load(oldPlayer)
+    service:release(oldPlayer)
+
+    local rejoined = newPlayer(9, "Ivy again")
+    local profile, reason = service:load(rejoined, {
+        duplicateRetries = 2,
+        duplicateRetrySeconds = 0,
+    })
+    check("a stuck release reports duplicate", profile == nil and reason == "duplicate", reason)
+    check("it uses every retry", sleeps == 2, sleeps)
+    check("the old profile is still closing", service:isLoaded(oldPlayer))
+
+    queue.drain()
+    check("the release can still finish later", not service:isLoaded(oldPlayer))
+    local retried, retriedReason = service:load(rejoined, { duplicateRetries = 0 })
+    check("a later load succeeds", retried ~= nil, retriedReason)
+    check("the later load reaches the store", store.loads == 2, store.loads)
 end
 
 ---------------------------------------------------------------- 保存后立刻 release：只写最终快照

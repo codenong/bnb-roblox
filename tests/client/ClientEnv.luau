@@ -4,8 +4,10 @@ local Env = {
     remotes = {}, -- name -> fake remote (handler = OnClientEvent callback)
     renderStepped = nil, -- RenderStepped callback captured from Main
     syncResponse = nil, -- what GetSync:InvokeServer() returns
+    invokeResponses = {}, -- name -> value/function returned by that remote's InvokeServer
     lastGrid = nil,
     gridCalls = 0,
+    loadingTimedOut = false,
 }
 
 -- Property sets are stored; any method call is a harmless no-op.

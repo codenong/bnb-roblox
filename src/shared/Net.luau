@@ -5,11 +5,15 @@
 -- Input        C->S RemoteEvent      dirs: {string}        oldest press first, newest last
 -- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
 -- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
+-- LeaveTable    C<=>S RemoteFunction () -> ok, reason    leave the current room
 -- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns
 -- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change)
 -- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues
 -- RoundEnd     S->C RemoteEvent      winnerId/name/char/colorIndex/duration/alive
 -- GetSync      C<=>S RemoteFunction  () -> full phase/room/roster/snapshot payload
+-- GetTables    C<=>S RemoteFunction  () -> versus table summaries
+-- JoinTable    C<=>S RemoteFunction  ("practice" | "versus" | tableId | {mode, tableId?})
+--                                    -> ok, reason, roomId
 --
 -- Server sends are room-scoped: Room.luau uses Net.send() for its members.
 -- Net.broadcast() remains available for server-wide notices only.
@@ -28,6 +32,9 @@ local DEFINITIONS = {
     Fx = "RemoteEvent",
     RoundEnd = "RemoteEvent",
     GetSync = "RemoteFunction",
+    GetTables = "RemoteFunction",
+    JoinTable = "RemoteFunction",
+    LeaveTable = "RemoteFunction",
 }
 
 local Net = {}

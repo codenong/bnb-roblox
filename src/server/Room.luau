@@ -137,10 +137,24 @@ function Room.new(opts)
     self.fxState = nil
     self.snapshot = SnapshotService.new()
 
-    -- Members receive this room's state and snapshots. In practice there is
-    -- exactly one; versus will add spectators here without changing transport.
+    -- Members receive this room's state and snapshots. Seats are the subset that
+    -- plays the next/current round; everyone else is a read-only spectator.
+    -- Spectators never take a seat, even when one becomes vacant.
     self.members = {}
     self.memberById = {}
+    self.seats = {}
+    self.seatById = {}
+    self.maxSpectators = opts.maxSpectators or Constants.VERSUS_SPECTATORS
+
+    -- Participants are fixed when the round starts so a player leaving mid-round
+    -- still shows up in settlement (and therefore in versus stats).
+    self.roundParticipants = {}
+    self.roundParticipantById = {}
+    self.roundActivity = {}
+    self.roundLeft = {}
+    self.roundNoAction = {}
+    self.roundNoActionChecked = false
+    self.roundEndReason = nil
 
     return self
 end
@@ -153,6 +167,14 @@ function Room:getMemberCount(): number
     return #self.members
 end
 
+function Room:getSeatCount(): number
+    return #self.seats
+end
+
+function Room:getSpectatorCount(): number
+    return #self.members - #self.seats
+end
+
 function Room:getPhase(): string
     return self.phase
 end
@@ -161,11 +183,50 @@ function Room:getMode(): string
     return self.mode
 end
 
+function Room:getWaitingSeconds(): number
+    return math.max(0, math.ceil(self.waitingLeft / Constants.TICK_RATE))
+end
+
+function Room:getResultsSeconds(): number
+    return math.max(0, math.ceil(self.resultsLeft / Constants.TICK_RATE))
+end
+
+-- Public, copy-only view used by the table browser.
+function Room:getSeatSummary()
+    local result = {}
+    for i, record in ipairs(self.seats) do
+        result[i] = { id = record.id, name = record.name }
+    end
+    return result
+end
+
+function Room:isSeated(record): boolean
+    return record ~= nil and self.seatById[record.id] ~= nil
+end
+
+function Room:isFull(): boolean
+    return #self.seats >= self.maxPlayers
+end
+
+-- Practice rooms are ready with one human because a bot fills the other seat.
+function Room:isCountdownReady(): boolean
+    return self.fillBots or self:isFull()
+end
+
+-- Whether another member can be accepted: a free seat always wins over the
+-- spectator cap, otherwise the spectator cap applies.
+function Room:canAddMember(): boolean
+    if self.phase == "waiting" and not self:isFull() then
+        return true
+    end
+    return self:getSpectatorCount() < self.maxSpectators
+end
+
 -- True while the waiting countdown is inside its lock window. Not locked when the
 -- room is not counting down (e.g. a versus table that is not full yet).
 function Room:isCharLocked(): boolean
     return self.phase == "waiting"
-        and #self.members > 0
+        and self:isCountdownReady()
         and self.waitingLeft > 0
         and self.waitingLeft <= self.charLockTicks
 end
@@ -184,7 +245,7 @@ end
 
 function Room:_refreshWaitingRoster()
     local entries = {}
-    for i, record in ipairs(self.members) do
+    for i, record in ipairs(self.seats) do
         if i > self.maxPlayers then
             break
         end
@@ -219,10 +280,14 @@ function Room:_buildState(record)
         mode = self.mode,
         practice = self.mode == "practice",
         maxPlayers = self.maxPlayers,
+        seatCount = #self.seats,
+        spectatorCount = self:getSpectatorCount(),
+        waitingForPlayers = false,
     }
 
     if self.phase == "waiting" then
-        state.endsIn = if #self.members > 0
+        state.waitingForPlayers = not self:isCountdownReady()
+        state.endsIn = if #self.members > 0 and self:isCountdownReady()
             then math.ceil(self.waitingLeft / Constants.TICK_RATE)
             else 0
         state.botFill = if self.fillBots
@@ -238,7 +303,7 @@ function Room:_buildState(record)
         state.lastResult = self.lastResult
     end
 
-    if record and self.rosterById[record.id] then
+    if record and self.seatById[record.id] then
         state.yourId = record.id
         state.spectating = false
     end
@@ -261,8 +326,18 @@ function Room:addMember(record)
         return false
     end
 
+    local wantsSeat = self.phase == "waiting" and not self:isFull()
+    if not wantsSeat and self:getSpectatorCount() >= self.maxSpectators then
+        return false
+    end
+
     table.insert(self.members, record)
     self.memberById[record.id] = record
+
+    if wantsSeat then
+        table.insert(self.seats, record)
+        self.seatById[record.id] = record
+    end
 
     if self.phase == "waiting" then
         self.waitingLeft = self.waitingTicks
@@ -281,22 +356,36 @@ function Room:removeMember(record)
         return false
     end
 
+    local wasSeated = self.seatById[record.id] ~= nil
     self.memberById[record.id] = nil
     for i = #self.members, 1, -1 do
         if self.members[i] == record then
             table.remove(self.members, i)
         end
     end
+    if wasSeated then
+        self.seatById[record.id] = nil
+        for i = #self.seats, 1, -1 do
+            if self.seats[i] == record then
+                table.remove(self.seats, i)
+            end
+        end
+    end
 
     local finished = false
-    if self.phase == "playing" and self.game and self.rosterById[record.id] then
+    if self.phase == "playing" and self.game and self.roundParticipantById[record.id] then
+        -- Leaving/disconnecting during a round is a forfeit. The participant is
+        -- kept in the round list so settlement can record the loss after the
+        -- member itself has been detached.
+        self.roundLeft[record.id] = true
+        self.roundEndReason = "leave"
         self.game:markDisconnected(record.id)
         self:collectFx()
         if self.game.over then
             self:finishRound()
             finished = true
         end
-    elseif self.phase == "waiting" then
+    elseif self.phase == "waiting" and wasSeated then
         self.waitingLeft = self.waitingTicks
         self:_refreshWaitingRoster()
     end
@@ -370,7 +459,7 @@ function Room:_startRound()
     local defs = {}
     local usedNames = {}
 
-    for _, record in ipairs(self.members) do
+    for _, record in ipairs(self.seats) do
         if #participants >= self.maxPlayers then
             break
         end
@@ -407,6 +496,17 @@ function Room:_startRound()
     self.waitingLeft = 0
     self.resultsLeft = 0
     self.lastResult = nil
+    self.roundParticipants = table.clone(participants)
+    self.roundParticipantById = {}
+    self.roundActivity = {}
+    self.roundLeft = {}
+    self.roundNoAction = {}
+    self.roundNoActionChecked = false
+    self.roundEndReason = nil
+    for _, record in ipairs(participants) do
+        self.roundParticipantById[record.id] = record
+        self.roundActivity[record.id] = false
+    end
 
     self.game = Game.new(defs, {
         random = function()
@@ -430,6 +530,15 @@ function Room:_beginWaiting()
     self.brains = {}
     self.lastResult = nil
     self.fxState = nil
+    self.roundParticipants = {}
+    self.roundParticipantById = {}
+    self.roundActivity = {}
+    self.roundLeft = {}
+    self.roundNoAction = {}
+    self.roundNoActionChecked = false
+    self.roundEndReason = nil
+    -- A seat opened by a departing player stays open for a new joiner. Existing
+    -- spectators remain read-only and are never seated automatically.
     self:_refreshWaitingRoster()
     self.snapshot:reset()
     self:broadcastState()
@@ -448,6 +557,15 @@ function Room:finishRound()
         end
     end
 
+    local reason = self.roundEndReason
+    if not reason then
+        if winner == nil and self.game.tickCount >= Constants.ROUND_TICKS then
+            reason = "timeout"
+        else
+            reason = "elimination"
+        end
+    end
+
     self.lastResult = {
         roundId = self.roundId,
         winnerId = if winner then winner.id else nil,
@@ -457,7 +575,9 @@ function Room:finishRound()
         winnerIsBot = if winner then winner.isBot else false,
         draw = winner == nil,
         duration = math.floor(self.game.tickCount / Constants.TICK_RATE),
+        durationTicks = self.game.tickCount,
         aliveCount = aliveCount,
+        reason = reason,
     }
 
     -- Final frame + result only to this room. RoundState below carries the
@@ -471,11 +591,32 @@ function Room:finishRound()
     self:broadcastState()
 
     if self.onSettled then
+        local participants = table.clone(self.roundParticipants)
+        local activity = {}
+        local left = {}
+        local noAction = {}
+        for _, record in ipairs(participants) do
+            local acted = self.roundActivity[record.id] == true
+            activity[record.id] = acted
+            left[record.id] = self.roundLeft[record.id] == true
+            noAction[record.id] = not acted
+        end
+        local context = {
+            roomId = self.id,
+            mode = self.mode,
+            roundId = self.roundId,
+            participants = participants,
+            activity = activity,
+            left = left,
+            noAction = noAction,
+            durationTicks = self.game.tickCount,
+            reason = reason,
+        }
         local ok, err = pcall(
             self.onSettled,
             table.clone(self.members),
             self.lastResult,
-            { roomId = self.id, mode = self.mode, roundId = self.roundId }
+            context
         )
         if not ok then
             warn(string.format(
@@ -495,7 +636,7 @@ function Room:_stepWaiting()
 
     -- Versus rooms wait for a full table; practice rooms always have a bot
     -- opponent ready, so one human is enough to start.
-    if not self.fillBots and #self.members < self.maxPlayers then
+    if not self:isCountdownReady() then
         self.waitingLeft = self.waitingTicks
         return
     end
@@ -513,6 +654,51 @@ function Room:_stepWaiting()
     if after ~= before or self:isCharLocked() ~= lockedBefore then
         self:broadcastState()
     end
+end
+
+-- A participant that never sends input/action for the whole no-action window
+-- forfeits. When both are idle the round is a draw. Either way the settlement
+-- context marks the absent player as no-action, so the game never counts toward
+-- versus stats.
+function Room:_checkNoAction()
+    if self.mode ~= "versus" or self.roundNoActionChecked then
+        return
+    end
+    if self.game.tickCount < Constants.VERSUS_NO_ACTION_TICKS then
+        return
+    end
+    self.roundNoActionChecked = true
+
+    local idle = {}
+    local aliveParticipants = 0
+    for _, record in ipairs(self.roundParticipants) do
+        local player = self.game.players[record.id]
+        if player and player.alive and not player.disconnected then
+            aliveParticipants += 1
+            if self.roundActivity[record.id] ~= true then
+                table.insert(idle, record)
+            end
+        end
+    end
+    if #idle == 0 then
+        return
+    end
+
+    self.roundEndReason = "no_action"
+    for _, record in ipairs(idle) do
+        self.roundNoAction[record.id] = true
+    end
+
+    if #idle >= aliveParticipants then
+        self.game.over = true
+        self.game.winner = nil
+        return
+    end
+
+    for _, record in ipairs(idle) do
+        self.game:markDisconnected(record.id)
+    end
+    self:collectFx()
 end
 
 function Room:_stepPlaying()
@@ -536,6 +722,10 @@ function Room:_stepPlaying()
         self.game.winner = nil
     else
         self:collectFx()
+    end
+
+    if not self.game.over then
+        self:_checkNoAction()
     end
 
     if self.game.over then
@@ -601,6 +791,9 @@ function Room:setInput(record, dirs)
 
     local participant = self.game.players[record.id]
     if participant and participant.alive then
+        if #clean > 0 then
+            self.roundActivity[record.id] = true
+        end
         self.game:setInput(record.id, clean)
     end
 end
@@ -612,9 +805,16 @@ function Room:action(record, action: string)
     if not record or not self.memberById[record.id] then
         return
     end
+    -- Spectators are room members but never round participants; ignore their
+    -- input entirely so reading the match cannot affect it.
+    if not self.roundParticipantById[record.id] then
+        return
+    end
     if action == "place" then
+        self.roundActivity[record.id] = true
         self.game:placeBomb(record.id, false)
     elseif action == "use" then
+        self.roundActivity[record.id] = true
         self.game:useItem(record.id)
     end
 end

@@ -161,6 +161,34 @@ function ProfileSchema.normalize(value: any): any
     return result
 end
 
+-- Record one valid versus game. `outcome` is "win", "loss" or "draw"; games is
+-- always incremented exactly once. Returns false for an unsupported outcome or a
+-- profile that cannot hold stats, without mutating it.
+function ProfileSchema.recordVersus(profile: any, outcome: any): boolean
+    if type(profile) ~= "table" then
+        return false
+    end
+    if outcome ~= "win" and outcome ~= "loss" and outcome ~= "draw" then
+        return false
+    end
+
+    local stats = profile.stats
+    if type(stats) ~= "table" then
+        stats = {}
+        profile.stats = stats
+    end
+    local versus = stats.versus
+    if type(versus) ~= "table" then
+        versus = {}
+        stats.versus = versus
+    end
+
+    versus.games = nonNegativeInt(versus.games, 0) + 1
+    local field = if outcome == "win" then "wins" elseif outcome == "loss" then "losses" else "draws"
+    versus[field] = nonNegativeInt(versus[field], 0) + 1
+    return true
+end
+
 local function getBucket(profile: any, itemId: any): { [any]: any }?
     if type(profile) ~= "table" or not ProfileSchema.isItemId(itemId) then
         return nil

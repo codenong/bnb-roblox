@@ -52,7 +52,7 @@ mkdir -p "$MATCH_BUILD"
 for f in ../src/shared/*.luau; do
   cp "build/$(basename "$f")" "$MATCH_BUILD/"
 done
-for name in MatchService PlayerService Room SnapshotService; do
+for name in MatchService PlayerService Room SnapshotService VersusStats; do
   {
     printf 'local __env = require("./TestEnv")\n'
     printf 'local game = __env.game\n'
@@ -70,6 +70,8 @@ cp match/StubNet.luau "$MATCH_BUILD/Net.luau"
 cp match/match_test.luau "$MATCH_BUILD/"
 cp match/room_test.luau "$MATCH_BUILD/"
 cp match/isolation_test.luau "$MATCH_BUILD/"
+cp match/versus_stats_test.luau "$MATCH_BUILD/"
+cp match/versus_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (room manager, stubbed server)"
@@ -78,6 +80,10 @@ echo "== room_test.luau (per-room audience)"
 "$LUAU" "$MATCH_BUILD/room_test.luau"
 echo "== isolation_test.luau (a failing room must not stop the others)"
 "$LUAU" "$MATCH_BUILD/isolation_test.luau"
+echo "== versus_stats_test.luau (rated duration/activity/outcome rules)"
+"$LUAU" "$MATCH_BUILD/versus_stats_test.luau"
+echo "== versus_test.luau (tables, countdown, spectators, forfeits)"
+"$LUAU" "$MATCH_BUILD/versus_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client

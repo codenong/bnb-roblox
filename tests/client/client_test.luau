@@ -101,4 +101,91 @@ do
     check("pick is not sent while playing", picks() == before, picks() - before)
 end
 
+---------------------------------------------------------------- 大厅列表与换桌
+do
+    fire("RoundState", {
+        phase = "waiting",
+        roomId = 1,
+        roundId = 12,
+        roster = {},
+        yourId = "u1",
+        grid = { "lobby" },
+    })
+
+    local tables = { { id = 7, phase = "waiting", seats = {}, joinable = true } }
+    local getTablesCalls = 0
+    Env.invokeResponses.GetTables = function()
+        getTablesCalls += 1
+        return tables
+    end
+    local leaveRemote = Env.remotes.LeaveTable
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = false, reason = "not_loaded" }
+    end
+    Env.signals.lobbyRequested()
+    check("a rejected leave does not open the browser", Env.lobbyOpen ~= true)
+    check("the browser does not load tables before the leave succeeds",
+        getTablesCalls == 0, getTablesCalls)
+
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = true }
+    end
+    Env.signals.lobbyRequested()
+    check("lobby request opens the overlay after leaving", Env.lobbyOpen == true)
+    check("opening the lobby leaves the current room", leaveRemote.invokes == 2,
+        leaveRemote.invokes)
+    check("lobby requests the table list", getTablesCalls == 1, getTablesCalls)
+    check("lobby receives the table list", Env.lobbyTables == tables)
+
+    -- A RoundState already in flight when the leave was accepted describes the
+    -- room the player just left. It must not close the browser or render a round
+    -- the server no longer has them in.
+    local lobbyGrid = Env.lastGrid
+    fire("RoundState", {
+        phase = "playing",
+        roomId = 1,
+        roundId = 98,
+        roster = {},
+        yourId = "u1",
+        grid = { "stale-round" },
+    })
+    check("a stale round state does not close the browser", Env.lobbyOpen == true)
+    check("a stale round state does not replace the board", Env.lastGrid == lobbyGrid)
+
+    Env.syncResponse = {
+        phase = "waiting",
+        roomId = 7,
+        roundId = 0,
+        roster = {},
+        yourId = "u1",
+        grid = { "joined" },
+    }
+    local joinRemote = Env.remotes.JoinTable
+    Env.invokeResponses.JoinTable = function(target)
+        return { ok = true, roomId = target.tableId }
+    end
+    local syncBefore = Env.remotes.GetSync.invokes
+    Env.signals.tableSelected({ mode = "versus", tableId = 7 })
+    check("table choice reaches the server", joinRemote.lastArgs[1].tableId == 7)
+    check("successful join closes the lobby", Env.lobbyOpen == false)
+    check("successful join asks for fresh state", Env.remotes.GetSync.invokes == syncBefore + 1,
+        Env.remotes.GetSync.invokes - syncBefore)
+
+    Env.signals.lobbyRequested()
+    Env.invokeResponses.JoinTable = function()
+        return { ok = false, reason = "table_full" }
+    end
+    Env.signals.tableSelected({ mode = "versus", tableId = 7 })
+    check("failed join keeps the lobby open", Env.lobbyOpen == true)
+    check("failed join explains why", Env.lobbyMessage == "桌子已满，请换一张", Env.lobbyMessage)
+
+    -- "返回练习" has no old room to restore; it joins a fresh practice room.
+    Env.invokeResponses.JoinTable = function()
+        return { ok = true }
+    end
+    Env.signals.tableSelected("practice")
+    check("closing the browser requests practice", joinRemote.lastArgs[1] == "practice")
+    check("returning to practice closes the browser", Env.lobbyOpen == false)
+end
+
 TestLib.finish()

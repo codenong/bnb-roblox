@@ -39,8 +39,23 @@ Stubs.Hud = {
     end,
     applySnapshot = function() end,
     setMuted = function() end,
+    setLoadingTimedOut = function(value)
+        Env.loadingTimedOut = value == true
+    end,
+    setLobbyOpen = function(open)
+        Env.lobbyOpen = open == true
+    end,
+    setLobbyTables = function(tables)
+        Env.lobbyTables = tables
+    end,
+    setLobbyMessage = function(message)
+        Env.lobbyMessage = message
+    end,
     charSelected = signal("charSelected"),
     mutePressed = signal("mutePressed"),
+    loadingRetryPressed = signal("loadingRetryPressed"),
+    lobbyRequested = signal("lobbyRequested"),
+    tableSelected = signal("tableSelected"),
 }
 
 Stubs.Input = {
@@ -86,8 +101,15 @@ Stubs.Net = {
             function remote:FireServer(...)
                 table.insert(self.sent, { ... })
             end
-            function remote:InvokeServer()
+            function remote:InvokeServer(...)
                 self.invokes = (self.invokes or 0) + 1
+                self.lastArgs = { ... }
+                local response = Env.invokeResponses and Env.invokeResponses[name]
+                if type(response) == "function" then
+                    return response(...)
+                elseif response ~= nil then
+                    return response
+                end
                 return Env.syncResponse
             end
             Env.remotes[name] = remote
