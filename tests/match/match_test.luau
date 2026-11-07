@@ -62,7 +62,7 @@ end
 
 ---------------------------------------------------------------- 独立练习房间
 
-MatchService.init()
+MatchService.init({ precreateVersus = false })
 Net.reset()
 
 -- GetSync can arrive before the profile load has seated the player. It must not

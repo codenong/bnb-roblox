@@ -52,7 +52,7 @@ local function warningsMatching(text: string): number
 end
 
 local function fresh()
-    MatchService.init()
+    MatchService.init({ precreateVersus = false })
     PlayerService.refreshNames()
     Net.reset()
     TestEnv.warnings = {}
@@ -87,7 +87,7 @@ for _, brokenFirst in ipairs({ true, false }) do
     check(label .. ": healthy room advanced every tick", progress(goodRoom.game) - before == 60, progress(goodRoom.game) - before)
     check(label .. ": healthy room untouched", MatchService.getRoomFor(good) == goodRoom and goodRoom:getPhase() == "playing")
     check(label .. ": broken room was closed", MatchService.getRoomFor(bad) ~= badRoom)
-    check(label .. ": failure logged once, not every frame", warningsMatching("failed and was closed") == 1, warningsMatching("failed and was closed"))
+    check(label .. ": failure logged once, not every frame", warningsMatching("failed and was recycled") == 1, warningsMatching("failed and was recycled"))
 
     local replacement = MatchService.getRoomFor(bad)
     check(label .. ": member re-seated in a fresh waiting room", replacement ~= nil and replacement:getPhase() == "waiting" and replacement:getMemberCount() == 1)
@@ -126,7 +126,7 @@ do
 
     local thrown = stepN(600)
     check("repeated failures: step never throws", thrown == 0, thrown)
-    check("repeated failures: bounded number of closures", warningsMatching("failed and was closed") == 4, warningsMatching("failed and was closed"))
+    check("repeated failures: bounded number of closures", warningsMatching("failed and was recycled") == 4, warningsMatching("failed and was recycled"))
     check("repeated failures: player eventually left without a room", MatchService.getRoomFor(victim) == nil)
     check("repeated failures: give-up is logged", warningsMatching("not reassigning") == 1, warningsMatching("not reassigning"))
     check("repeated failures: only the other player's room remains", MatchService.getRoomCount() == 1, MatchService.getRoomCount())

@@ -12,8 +12,15 @@
 -- RoundEnd     S->C RemoteEvent      winnerId/name/char/colorIndex/duration/alive
 -- GetSync      C<=>S RemoteFunction  () -> full phase/room/roster/snapshot payload
 -- GetTables    C<=>S RemoteFunction  () -> versus table summaries
--- JoinTable    C<=>S RemoteFunction  ("practice" | "versus" | tableId | {mode, tableId?})
+-- JoinTable    C<=>S RemoteFunction  ("practice" | "versus" | tableId |
+--                                    {mode, tableId?, password?})
 --                                    -> ok, reason, roomId
+-- SetRoomConfig C<=>S RemoteFunction {name?, password?} -> ok, reason
+--                                    host only, waiting only; password "" clears
+-- Notice       S->C RemoteEvent      {message} targeted transient toast
+--
+-- Passwords only ever travel in the JoinTable request and the SetRoomConfig
+-- request. They are never included in RoundState, GetSync or GetTables.
 --
 -- Server sends are room-scoped: Room.luau uses Net.send() for its members.
 -- Net.broadcast() remains available for server-wide notices only.
@@ -35,6 +42,8 @@ local DEFINITIONS = {
     GetTables = "RemoteFunction",
     JoinTable = "RemoteFunction",
     LeaveTable = "RemoteFunction",
+    SetRoomConfig = "RemoteFunction",
+    Notice = "RemoteEvent",
 }
 
 local Net = {}

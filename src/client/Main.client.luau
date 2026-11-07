@@ -47,6 +47,8 @@ local getSyncRemote = Net.get("GetSync")
 local getTablesRemote = Net.get("GetTables")
 local joinTableRemote = Net.get("JoinTable")
 local leaveTableRemote = Net.get("LeaveTable")
+local setRoomConfigRemote = Net.get("SetRoomConfig")
+local noticeRemote = Net.get("Notice")
 
 ---------------------------------------------------------------- 状态
 
@@ -159,6 +161,15 @@ roundEndRemote.OnClientEvent:Connect(function(result)
     Audio.playResult(result, currentState and currentState.yourId)
 end)
 
+-- Targeted transient toast, currently used when a seatless versus room sends its
+-- spectators back to practice.
+noticeRemote.OnClientEvent:Connect(function(payload)
+    local message = if type(payload) == "table" then payload.message elseif type(payload) == "string" then payload else nil
+    if type(message) == "string" and message ~= "" then
+        Hud.showNotice(message)
+    end
+end)
+
 Hud.charSelected.Event:Connect(function(charId)
     -- The server rejects picks inside the lock window; do not even send them.
     if currentState and currentState.phase == "waiting" and not currentState.charLocked then
@@ -238,9 +249,25 @@ local JOIN_ERRORS = {
     invalid_target = "无法进入该房间",
     invalid_table = "桌子编号无效",
     no_table = "这张桌子已经不存在",
-    no_tables = "暂时无法开新桌，请稍后再试",
+    no_tables = "没有可直接加入的桌子；密码房请在列表中选择",
     table_full = "桌子已满，请换一张",
+    password_required = "请输入房间密码",
+    wrong_password = "密码错误",
+    too_many_attempts = "密码错误次数过多，请稍后再试",
     join_failed = "加入失败，请重试",
+}
+
+local CONFIG_ERRORS = {
+    not_loaded = "数据仍在加载，请稍后再试",
+    not_in_room = "你已不在该房间",
+    not_versus = "练习房间不能修改设置",
+    not_host = "只有房主可以修改设置",
+    not_waiting = "对局开始后无法修改设置",
+    invalid_request = "设置内容无效",
+    invalid_name = "房间名需为 1–30 个字符",
+    filter_failed = "房间名包含不可用内容，请换一个",
+    invalid_password = "密码需为 4–6 位数字",
+    config_rate_limited = "操作太频繁，请稍后再试",
 }
 
 local function loadLobbyTables()
@@ -284,6 +311,26 @@ Hud.tableSelected.Event:Connect(function(target)
     browsing = false
     Hud.setLobbyOpen(false)
     requestSync()
+end)
+
+-- The HUD only emits intent; all validation and filtering happen on the server.
+Hud.roomConfigSubmitted.Event:Connect(function(request)
+    if type(request) ~= "table" then
+        Hud.setRoomConfigResult(false, CONFIG_ERRORS.invalid_request)
+        return
+    end
+    local ok, result = pcall(function()
+        return setRoomConfigRemote:InvokeServer(request)
+    end)
+    if not ok or type(result) ~= "table" then
+        Hud.setRoomConfigResult(false, "保存失败，请重试")
+        return
+    end
+    if result.ok then
+        Hud.setRoomConfigResult(true, nil)
+    else
+        Hud.setRoomConfigResult(false, CONFIG_ERRORS[result.reason] or "保存失败，请重试")
+    end
 end)
 
 requestSync()

@@ -146,6 +146,14 @@ function Room.new(opts)
     self.seatById = {}
     self.maxSpectators = opts.maxSpectators or Constants.VERSUS_SPECTATORS
 
+    -- Versus rooms have a temporary host and optional entry password. Practice
+    -- rooms leave these unused. The password stays in server memory only and is
+    -- never put in a state/sync/table payload.
+    self.defaultName = opts.defaultName or ("房间 " .. tostring(self.id))
+    self.name = if self.mode == "versus" then self.defaultName else nil
+    self.hostId = nil
+    self.password = nil
+
     -- Participants are fixed when the round starts so a player leaving mid-round
     -- still shows up in settlement (and therefore in versus stats).
     self.roundParticipants = {}
@@ -173,6 +181,76 @@ end
 
 function Room:getSpectatorCount(): number
     return #self.members - #self.seats
+end
+
+function Room:getRoomName(): string?
+    return self.name
+end
+
+function Room:getHostId(): string?
+    return self.hostId
+end
+
+function Room:getHostRecord()
+    if self.hostId == nil then
+        return nil
+    end
+    return self.memberById[self.hostId]
+end
+
+function Room:getHostName(): string?
+    local record = self:getHostRecord()
+    return if record then record.name else nil
+end
+
+function Room:hasPassword(): boolean
+    return self.password ~= nil
+end
+
+function Room:checkPassword(password): boolean
+    return self.password ~= nil
+        and type(password) == "string"
+        and password == self.password
+end
+
+-- Copy of the non-seated members. MatchService uses this when a room loses its
+-- last seat and must move its audience out.
+function Room:getSpectatorRecords()
+    local result = {}
+    for _, record in ipairs(self.members) do
+        if not self.seatById[record.id] then
+            table.insert(result, record)
+        end
+    end
+    return result
+end
+
+function Room:resetConfig()
+    self.hostId = nil
+    self.name = if self.mode == "versus" then self.defaultName else nil
+    self.password = nil
+end
+
+-- Host-only mutation. Name/password validation and filtering happen in
+-- MatchService; Room only keeps the room-scoped state and broadcasts it.
+function Room:setConfig(requesterId, name: string?, passwordUpdate: string?): (boolean, string?)
+    if self.mode ~= "versus" then
+        return false, "not_versus"
+    end
+    if self.phase ~= "waiting" then
+        return false, "not_waiting"
+    end
+    if requesterId == nil or self.hostId ~= requesterId then
+        return false, "not_host"
+    end
+    if name ~= nil then
+        self.name = name
+    end
+    if passwordUpdate ~= nil then
+        self.password = if passwordUpdate == "" then nil else passwordUpdate
+    end
+    self:broadcastState()
+    return true
 end
 
 function Room:getPhase(): string
@@ -283,6 +361,11 @@ function Room:_buildState(record)
         seatCount = #self.seats,
         spectatorCount = self:getSpectatorCount(),
         waitingForPlayers = false,
+        roomName = self.name,
+        hostId = self.hostId,
+        hostName = self:getHostName(),
+        hasPassword = self:hasPassword(),
+        isHost = record ~= nil and self.hostId == record.id,
     }
 
     if self.phase == "waiting" then
@@ -337,11 +420,18 @@ function Room:addMember(record)
     if wantsSeat then
         table.insert(self.seats, record)
         self.seatById[record.id] = record
+        if self.mode == "versus" and self.hostId == nil then
+            self.hostId = record.id
+        end
     end
 
     if self.phase == "waiting" then
-        self.waitingLeft = self.waitingTicks
-        self:_refreshWaitingRoster()
+        -- Only a new seat changes the countdown/roster. A spectator joining a
+        -- full table must not restart the 10 s countdown.
+        if wantsSeat then
+            self.waitingLeft = self.waitingTicks
+            self:_refreshWaitingRoster()
+        end
         self:broadcastState()
     else
         -- Joined mid-round/mid-results: receive this room's current state and
@@ -372,6 +462,22 @@ function Room:removeMember(record)
         end
     end
 
+    -- Host transfer happens before settlement/broadcast so the remaining players
+    -- receive the new host and the reset name/password in the same state. A room
+    -- with no seats has no host at all.
+    local emptiedSeats = wasSeated and #self.seats == 0
+    if self.mode == "versus" then
+        local wasHost = self.hostId == record.id
+        if emptiedSeats or wasHost then
+            self:resetConfig()
+            if not emptiedSeats and self.seats[1] then
+                self.hostId = self.seats[1].id
+            end
+        elseif self.hostId == nil and self.seats[1] then
+            self.hostId = self.seats[1].id
+        end
+    end
+
     local finished = false
     if self.phase == "playing" and self.game and self.roundParticipantById[record.id] then
         -- Leaving/disconnecting during a round is a forfeit. The participant is
@@ -393,7 +499,7 @@ function Room:removeMember(record)
     if not finished and #self.members > 0 then
         self:broadcastState()
     end
-    return true
+    return true, emptiedSeats
 end
 
 function Room:collectFx()
@@ -522,7 +628,10 @@ function Room:_startRound()
     self:broadcastState()
 end
 
-function Room:_beginWaiting()
+-- Clear round-scoped state without touching members or room configuration.
+-- Used both by the normal results -> waiting transition and when a room loses
+-- its last seat.
+function Room:resetForWaiting()
     self.phase = "waiting"
     self.waitingLeft = self.waitingTicks
     self.resultsLeft = 0
@@ -541,7 +650,23 @@ function Room:_beginWaiting()
     -- spectators remain read-only and are never seated automatically.
     self:_refreshWaitingRoster()
     self.snapshot:reset()
+end
+
+function Room:_beginWaiting()
+    self:resetForWaiting()
     self:broadcastState()
+end
+
+-- Hard reset used when a versus room is recycled after an internal failure. Its
+-- members are moved out by MatchService first; the room keeps its registry slot
+-- and returns to a clean empty waiting state.
+function Room:resetEmpty()
+    self.members = {}
+    self.memberById = {}
+    self.seats = {}
+    self.seatById = {}
+    self:resetConfig()
+    self:resetForWaiting()
 end
 
 function Room:finishRound()

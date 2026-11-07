@@ -72,6 +72,7 @@ cp match/room_test.luau "$MATCH_BUILD/"
 cp match/isolation_test.luau "$MATCH_BUILD/"
 cp match/versus_stats_test.luau "$MATCH_BUILD/"
 cp match/versus_test.luau "$MATCH_BUILD/"
+cp match/room_config_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (room manager, stubbed server)"
@@ -84,6 +85,8 @@ echo "== versus_stats_test.luau (rated duration/activity/outcome rules)"
 "$LUAU" "$MATCH_BUILD/versus_stats_test.luau"
 echo "== versus_test.luau (tables, countdown, spectators, forfeits)"
 "$LUAU" "$MATCH_BUILD/versus_test.luau"
+echo "== room_config_test.luau (persistent rooms, host, name, password, notices)"
+"$LUAU" "$MATCH_BUILD/room_config_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client

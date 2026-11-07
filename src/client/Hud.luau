@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local RoomName = require(Shared:WaitForChild("RoomName"))
 local Sprites = require(Shared:WaitForChild("Sprites"))
 local AssetIds = require(Shared:WaitForChild("AssetIds"))
 
@@ -16,8 +17,10 @@ Hud.charSelected = Instance.new("BindableEvent")
 Hud.mutePressed = Instance.new("BindableEvent")
 Hud.loadingRetryPressed = Instance.new("BindableEvent")
 Hud.lobbyRequested = Instance.new("BindableEvent")
--- Fired with "practice", "versus", or { mode = "versus", tableId = n }.
+-- Fired with "practice", "versus", or { mode = "versus", tableId = n, password? }.
 Hud.tableSelected = Instance.new("BindableEvent")
+-- Fired by the host settings modal with { name?, password? }; password "" clears.
+Hud.roomConfigSubmitted = Instance.new("BindableEvent")
 
 local PANEL = Color3.fromRGB(12, 27, 42)
 local PANEL_2 = Color3.fromRGB(18, 38, 57)
@@ -71,12 +74,28 @@ local waitingInfo
 local waitingCountdown
 local waitingHint
 local waitingLobbyButton
+local waitingSettingsButton
 local waitingSlots = {}
 local waitingCards = {}
 local lobbyOverlay
 local lobbyStatus
 local lobbyTableRows = {}
 local lobbyTables = {}
+local passwordOverlay
+local passwordRoomLabel
+local passwordBox
+local passwordStatus
+local passwordTarget
+local settingsOverlay
+local settingsNameBox
+local settingsPasswordBox
+local settingsStatus
+local settingsClearButton
+local settingsPending = false
+local noticeToast
+local noticeLabel
+local noticeGeneration = 0
+local openSettingsOverlay
 local countdownOverlay
 local countdownImage
 local countdownFallback
@@ -169,6 +188,51 @@ local function actionButton(parent, name, text, size, position, color)
     round(button, 0.35)
     outline(button, Color3.fromRGB(76, 126, 151), 1, 0.4)
     return button
+end
+
+-- First text input in the game. The border highlight makes focus visible, which
+-- matters on touch where there is no caret until the keyboard opens.
+local function newTextBox(parent, name, placeholder, size, position)
+    local box = Instance.new("TextBox")
+    box.Name = name
+    box.Size = size
+    box.Position = position
+    box.BackgroundColor3 = PANEL
+    box.BackgroundTransparency = 0.05
+    box.BorderSizePixel = 0
+    box.AutoButtonColor = false
+    box.ClearTextOnFocus = false
+    box.MultiLine = false
+    box.Text = ""
+    box.PlaceholderText = placeholder or ""
+    box.PlaceholderColor3 = SUBTLE
+    box.TextColor3 = TEXT
+    box.TextSize = 14
+    box.Font = Enum.Font.Gotham
+    box.TextXAlignment = Enum.TextXAlignment.Left
+    box.Parent = parent
+    round(box, 0.25)
+    local stroke = outline(box, Color3.fromRGB(76, 126, 151), 1, 0.35)
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 8)
+    padding.PaddingRight = UDim.new(0, 8)
+    padding.Parent = box
+    box.Focused:Connect(function()
+        stroke.Color = ACCENT
+        stroke.Transparency = 0.05
+    end)
+    box.FocusLost:Connect(function()
+        stroke.Color = Color3.fromRGB(76, 126, 151)
+        stroke.Transparency = 0.35
+    end)
+    return box
+end
+
+local function isValidPassword(text): boolean
+    return type(text) == "string"
+        and #text >= Constants.ROOM_PASSWORD_MIN_DIGITS
+        and #text <= Constants.ROOM_PASSWORD_MAX_DIGITS
+        and text:match("^%d+$") ~= nil
 end
 
 local function setZRecursive(root, z)
@@ -556,6 +620,21 @@ local function buildWaiting()
         Hud.lobbyRequested:Fire()
     end)
 
+    waitingSettingsButton = actionButton(
+        waitingOverlay,
+        "SettingsButton",
+        "设置",
+        UDim2.fromOffset(64, 26),
+        UDim2.fromOffset(444, 16),
+        Color3.fromRGB(37, 82, 103)
+    )
+    waitingSettingsButton.Visible = false
+    waitingSettingsButton.Activated:Connect(function()
+        if openSettingsOverlay then
+            openSettingsOverlay()
+        end
+    end)
+
     local wipe = newFrame(
         waitingOverlay,
         "Glow",
@@ -726,6 +805,288 @@ local function buildWaiting()
     end
 end
 
+---------------------------------------------------------------- 房间密码 / 设置
+
+local function closePasswordPrompt()
+    if passwordOverlay then
+        passwordOverlay.Visible = false
+    end
+    passwordTarget = nil
+    if passwordBox then
+        passwordBox.Text = ""
+    end
+    if passwordStatus then
+        passwordStatus.Text = ""
+    end
+end
+
+local function openPasswordPrompt(tableData)
+    if not passwordOverlay or type(tableData) ~= "table" then
+        return
+    end
+    passwordTarget = tableData
+    passwordRoomLabel.Text = RoomName.display(tableData.name) or string.format("桌子 %d", tableData.id or 0)
+    passwordBox.Text = ""
+    passwordStatus.Text = ""
+    if lobbyStatus then
+        lobbyStatus.Text = ""
+    end
+    passwordOverlay.Visible = true
+    task.defer(function()
+        if passwordOverlay.Visible and passwordBox then
+            pcall(function()
+                passwordBox:CaptureFocus()
+            end)
+        end
+    end)
+end
+
+local function submitPasswordPrompt()
+    local target = passwordTarget
+    if type(target) ~= "table" then
+        closePasswordPrompt()
+        return
+    end
+    local text = passwordBox.Text
+    if not isValidPassword(text) then
+        passwordStatus.Text = "密码需为 4–6 位数字"
+        return
+    end
+    local tableId = target.id
+    closePasswordPrompt()
+    Hud.tableSelected:Fire({ mode = "versus", tableId = tableId, password = text })
+end
+
+local function buildPasswordPrompt()
+    passwordOverlay = newFrame(
+        stage,
+        "PasswordOverlay",
+        UDim2.fromOffset(600, 520),
+        UDim2.fromOffset(20, 64),
+        Color3.fromRGB(0, 0, 0),
+        0.45
+    )
+    passwordOverlay.Visible = false
+    passwordOverlay.Active = true
+
+    local panel = newFrame(
+        passwordOverlay,
+        "Panel",
+        UDim2.fromOffset(420, 230),
+        UDim2.fromScale(0.5, 0.5),
+        PANEL_2,
+        0
+    )
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    round(panel, 0.04)
+    outline(panel, Color3.fromRGB(54, 107, 132), 1.5, 0.25)
+
+    centeredLabel(panel, "Title", "输入房间密码", UDim2.fromOffset(380, 26), UDim2.fromOffset(20, 12), TEXT, 18)
+    passwordRoomLabel = centeredLabel(
+        panel,
+        "Room",
+        "",
+        UDim2.fromOffset(380, 18),
+        UDim2.fromOffset(20, 40),
+        SUBTLE,
+        11,
+        false
+    )
+    passwordBox = newTextBox(panel, "Password", "4–6 位数字", UDim2.fromOffset(360, 36), UDim2.fromOffset(30, 70))
+    passwordBox.TextXAlignment = Enum.TextXAlignment.Center
+    passwordStatus = centeredLabel(
+        panel,
+        "Status",
+        "",
+        UDim2.fromOffset(380, 18),
+        UDim2.fromOffset(20, 110),
+        DANGER,
+        10,
+        false
+    )
+
+    local cancel = actionButton(panel, "Cancel", "取消", UDim2.fromOffset(150, 32), UDim2.fromOffset(30, 160), PANEL_3)
+    cancel.Activated:Connect(closePasswordPrompt)
+    local confirm = actionButton(
+        panel,
+        "Confirm",
+        "进入",
+        UDim2.fromOffset(150, 32),
+        UDim2.fromOffset(240, 160),
+        Color3.fromRGB(37, 92, 119)
+    )
+    confirm.Activated:Connect(submitPasswordPrompt)
+    passwordBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed and passwordOverlay.Visible then
+            submitPasswordPrompt()
+        end
+    end)
+
+    setZRecursive(passwordOverlay, 150000)
+end
+
+local function closeSettingsOverlay()
+    if settingsOverlay then
+        settingsOverlay.Visible = false
+    end
+    settingsPending = false
+    if settingsStatus then
+        settingsStatus.Text = ""
+    end
+end
+
+openSettingsOverlay = function()
+    if not settingsOverlay or not state or state.phase ~= "waiting" or state.isHost ~= true then
+        return
+    end
+    settingsNameBox.Text = state.roomName or ""
+    settingsPasswordBox.Text = ""
+    settingsStatus.TextColor3 = SUBTLE
+    settingsStatus.Text = ""
+    settingsClearButton.Visible = state.hasPassword == true
+    settingsPending = false
+    settingsOverlay.Visible = true
+end
+
+local function submitSettings(request)
+    if not settingsOverlay or not settingsOverlay.Visible or settingsPending then
+        return
+    end
+    settingsPending = true
+    settingsStatus.TextColor3 = SUBTLE
+    settingsStatus.Text = "正在保存…"
+    Hud.roomConfigSubmitted:Fire(request)
+end
+
+local function buildSettings()
+    settingsOverlay = newFrame(
+        stage,
+        "SettingsOverlay",
+        UDim2.fromOffset(600, 520),
+        UDim2.fromOffset(20, 64),
+        Color3.fromRGB(0, 0, 0),
+        0.45
+    )
+    settingsOverlay.Visible = false
+    settingsOverlay.Active = true
+
+    local panel = newFrame(
+        settingsOverlay,
+        "Panel",
+        UDim2.fromOffset(460, 290),
+        UDim2.fromScale(0.5, 0.5),
+        PANEL_2,
+        0
+    )
+    panel.AnchorPoint = Vector2.new(0.5, 0.5)
+    round(panel, 0.04)
+    outline(panel, Color3.fromRGB(54, 107, 132), 1.5, 0.25)
+
+    centeredLabel(panel, "Title", "房间设置", UDim2.fromOffset(420, 26), UDim2.fromOffset(20, 12), TEXT, 18)
+    label(panel, "NameLabel", "房间名（1–30 个字符）", UDim2.fromOffset(420, 16), UDim2.fromOffset(20, 44), SUBTLE, 10, false)
+    settingsNameBox = newTextBox(panel, "Name", "输入房间名", UDim2.fromOffset(420, 36), UDim2.fromOffset(20, 62))
+    label(
+        panel,
+        "PasswordLabel",
+        "新密码（留空不修改，4–6 位数字）",
+        UDim2.fromOffset(420, 16),
+        UDim2.fromOffset(20, 108),
+        SUBTLE,
+        10,
+        false
+    )
+    settingsPasswordBox = newTextBox(
+        panel,
+        "Password",
+        "留空则保持当前密码",
+        UDim2.fromOffset(420, 36),
+        UDim2.fromOffset(20, 126)
+    )
+    settingsStatus = centeredLabel(
+        panel,
+        "Status",
+        "",
+        UDim2.fromOffset(420, 18),
+        UDim2.fromOffset(20, 168),
+        DANGER,
+        10,
+        false
+    )
+
+    settingsClearButton = actionButton(
+        panel,
+        "ClearPassword",
+        "清除密码",
+        UDim2.fromOffset(120, 34),
+        UDim2.fromOffset(20, 214),
+        Color3.fromRGB(91, 54, 54)
+    )
+    settingsClearButton.Visible = false
+    settingsClearButton.Activated:Connect(function()
+        submitSettings({ password = "" })
+    end)
+
+    local cancel = actionButton(panel, "Cancel", "取消", UDim2.fromOffset(110, 34), UDim2.fromOffset(170, 214), PANEL_3)
+    cancel.Activated:Connect(closeSettingsOverlay)
+    local function saveSettings()
+        local request = { name = settingsNameBox.Text }
+        local password = settingsPasswordBox.Text
+        if password ~= "" then
+            if not isValidPassword(password) then
+                settingsStatus.TextColor3 = DANGER
+                settingsStatus.Text = "密码需为 4–6 位数字"
+                return
+            end
+            request.password = password
+        end
+        submitSettings(request)
+    end
+
+    local save = actionButton(
+        panel,
+        "Save",
+        "保存",
+        UDim2.fromOffset(140, 34),
+        UDim2.fromOffset(300, 214),
+        Color3.fromRGB(37, 92, 119)
+    )
+    save.Activated:Connect(saveSettings)
+    settingsPasswordBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed and settingsOverlay.Visible then
+            saveSettings()
+        end
+    end)
+
+    setZRecursive(settingsOverlay, 150000)
+end
+
+local function buildNoticeToast()
+    noticeToast = newFrame(
+        stage,
+        "NoticeToast",
+        UDim2.fromOffset(400, 36),
+        UDim2.fromOffset(120, 72),
+        Color3.fromRGB(9, 29, 45),
+        0.04
+    )
+    noticeToast.Visible = false
+    noticeToast.Active = false
+    round(noticeToast, 0.4)
+    outline(noticeToast, ACCENT, 1, 0.25)
+    noticeLabel = centeredLabel(
+        noticeToast,
+        "Message",
+        "",
+        UDim2.new(1, -20, 1, 0),
+        UDim2.fromOffset(10, 0),
+        TEXT,
+        12,
+        false
+    )
+    noticeLabel.TextWrapped = true
+    setZRecursive(noticeToast, 160000)
+end
+
 -- GUI room browser. Practice always exists; versus tables are server-owned and
 -- listed on demand. The overlay is intentionally a flat list so it works on the
 -- same narrow layout as the waiting screen.
@@ -747,7 +1108,7 @@ local function buildLobby()
     centeredLabel(
         lobbyOverlay,
         "Subtitle",
-        "已离开原房间 · 练习随时开始；对战桌子满 2 人后自动倒计时",
+        "已离开原房间 · 对战桌子常驻 · 密码房需在列表中进入",
         UDim2.fromOffset(600, 18),
         UDim2.fromOffset(0, 44),
         SUBTLE,
@@ -802,7 +1163,7 @@ local function buildLobby()
     label(
         quickButton,
         "Detail",
-        "优先补位等待中的桌子，否则新开一桌",
+        "优先补位无密码的等待桌，否则观战或新开一桌",
         UDim2.fromOffset(420, 18),
         UDim2.fromOffset(14, 28),
         SUBTLE,
@@ -850,6 +1211,10 @@ local function buildLobby()
                 Hud.setLobbyMessage("这张桌子已满，稍后再试")
                 return
             end
+            if data.hasPassword then
+                openPasswordPrompt(data)
+                return
+            end
             Hud.tableSelected:Fire({ mode = "versus", tableId = data.id })
         end)
     end
@@ -888,21 +1253,25 @@ local function updateLobby()
         if data then
             entry.row.Visible = true
             local seats = data.seats or {}
-            entry.name.Text = string.format("桌子 %d", data.id)
+            entry.name.Text = RoomName.display(data.name) or string.format("桌子 %d", data.id)
             entry.name.TextColor3 = TEXT
+            local hostName = RoomName.display(data.hostName) or "空房"
             entry.detail.Text = string.format(
-                "%s · %d/%d 座 · 观战 %d/%d",
+                "%s · 房主 %s · %d/%d 座 · 观战 %d/%d · %s",
                 phaseLabel(data),
+                hostName,
                 data.seatCount or #seats,
                 data.maxPlayers or 2,
                 data.spectatorCount or 0,
-                data.maxSpectators or 0
+                data.maxSpectators or 0,
+                if data.hasPassword then "有密码" else "无密码"
             )
             local full = (data.seatCount or #seats) >= (data.maxPlayers or 2)
-            entry.join.Text = if full and data.joinable
-                then "观战"
-                elseif data.joinable then "加入"
-                else "已满"
+            entry.join.Text = if not data.joinable
+                then "已满"
+                elseif data.hasPassword then "输入密码"
+                elseif full then "观战"
+                else "加入"
             entry.join.TextColor3 = if data.joinable then ACCENT else SUBTLE
             entry.row.BackgroundTransparency = 0.05
         else
@@ -910,7 +1279,7 @@ local function updateLobby()
         end
     end
     if #lobbyTables == 0 then
-        lobbyStatus.Text = "还没有对战桌子，进入快速对战即可开桌"
+        lobbyStatus.Text = "暂时没有对战桌子，请刷新"
     elseif lobbyStatus.Text == "正在刷新…" or lobbyStatus.Text == "正在读取桌子…" then
         lobbyStatus.Text = ""
     end
@@ -929,6 +1298,8 @@ function Hud.setLobbyOpen(open: boolean)
     if lobbyOverlay.Visible then
         lobbyStatus.Text = ""
         updateLobby()
+    else
+        closePasswordPrompt()
     end
 end
 
@@ -985,10 +1356,24 @@ local function updateWaiting()
     local real = #state.roster
 
     if waitingTitle then
-        waitingTitle.Text = if practice then "海盗14  ·  练习模式" else "海盗14  ·  对战"
+        waitingTitle.Text = if practice
+            then "海盗14  ·  练习模式"
+            else "海盗14  ·  " .. (RoomName.display(state.roomName) or "对战")
     end
     if waitingSubtitle then
-        waitingSubtitle.Text = if practice then "1v1 · 选择角色，对战 Bot" else "选择你的角色"
+        if practice then
+            waitingSubtitle.Text = "1v1 · 选择角色，对战 Bot"
+        else
+            local hostName = RoomName.display(state.hostName) or "空房"
+            waitingSubtitle.Text = string.format(
+                "房主：%s · %s",
+                hostName,
+                if state.hasPassword then "有密码" else "无密码"
+            )
+        end
+    end
+    if waitingSettingsButton then
+        waitingSettingsButton.Visible = not practice and state.isHost == true
     end
 
     waitingInfo.Text = if practice
@@ -1608,6 +1993,18 @@ local function positionOverlays()
         lobbyOverlay.Position = position
         lobbyOverlay.Size = size
     end
+    if passwordOverlay then
+        passwordOverlay.Position = position
+        passwordOverlay.Size = size
+    end
+    if settingsOverlay then
+        settingsOverlay.Position = position
+        settingsOverlay.Size = size
+    end
+    if noticeToast then
+        noticeToast.Position = UDim2.fromOffset(position.X.Offset + 40, position.Y.Offset + 8)
+        noticeToast.Size = UDim2.fromOffset(math.max(220, size.X.Offset - 80), 36)
+    end
     countdownOverlay.Position = position
     countdownOverlay.Size = size
     resultOverlay.Position = position
@@ -1740,6 +2137,9 @@ function Hud.init(screenGui)
     buildLoading()
     buildWaiting()
     buildLobby()
+    buildPasswordPrompt()
+    buildSettings()
+    buildNoticeToast()
     buildCountdown()
     buildResult()
     layout()
@@ -1786,8 +2186,16 @@ function Hud.setState(newState)
         return
     end
     local previousPhase = state and state.phase
+    local previousRoomId = state and state.roomId
     state = newState
     selectedChar = state.selectedChar or selectedChar
+
+    if settingsOverlay
+        and (state.phase ~= "waiting"
+            or state.isHost ~= true
+            or (previousRoomId ~= nil and previousRoomId ~= state.roomId)) then
+        closeSettingsOverlay()
+    end
 
     if loadingOverlay then
         loadingOverlay.Visible = state.phase == "loading"
@@ -1846,6 +2254,40 @@ function Hud.applySnapshot(snapshot)
         if state.phase == "ended" then
             showResult()
         end
+    end
+end
+
+-- Transient, non-blocking toast used for server notices. A generation token
+-- keeps an older timeout from hiding a newer notice.
+function Hud.showNotice(message)
+    if type(message) == "table" then
+        message = message.message
+    end
+    if not noticeToast or type(message) ~= "string" or message == "" then
+        return
+    end
+    noticeGeneration += 1
+    local generation = noticeGeneration
+    noticeLabel.Text = message
+    noticeToast.Visible = true
+    task.delay(Constants.NOTICE_SECONDS, function()
+        if generation == noticeGeneration then
+            noticeToast.Visible = false
+        end
+    end)
+end
+
+-- Result of a SetRoomConfig request. Success closes the modal; failure keeps it
+-- open so the host can correct the field.
+function Hud.setRoomConfigResult(ok: boolean, message: string?)
+    settingsPending = false
+    if ok then
+        closeSettingsOverlay()
+        return
+    end
+    if settingsOverlay and settingsOverlay.Visible then
+        settingsStatus.TextColor3 = DANGER
+        settingsStatus.Text = message or "保存失败，请重试"
     end
 end
 

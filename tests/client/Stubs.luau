@@ -51,11 +51,20 @@ Stubs.Hud = {
     setLobbyMessage = function(message)
         Env.lobbyMessage = message
     end,
+    showNotice = function(message)
+        Env.notices = Env.notices or {}
+        table.insert(Env.notices, message)
+    end,
+    setRoomConfigResult = function(ok, message)
+        Env.roomConfigResults = Env.roomConfigResults or {}
+        table.insert(Env.roomConfigResults, { ok = ok == true, message = message })
+    end,
     charSelected = signal("charSelected"),
     mutePressed = signal("mutePressed"),
     loadingRetryPressed = signal("loadingRetryPressed"),
     lobbyRequested = signal("lobbyRequested"),
     tableSelected = signal("tableSelected"),
+    roomConfigSubmitted = signal("roomConfigSubmitted"),
 }
 
 Stubs.Input = {

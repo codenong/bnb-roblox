@@ -296,7 +296,7 @@ end
 ---------------------------------------------------------------- 换桌 = 离开房间
 
 do
-    MatchService.init({})
+    MatchService.init({ precreateVersus = false })
 
     local pa, pb, pc = newProfile(), newProfile(), newProfile()
     local alice = addPlayer("Leave Alice", pa)
@@ -391,6 +391,7 @@ do
     local summaries = {}
     local settledContexts = {}
     MatchService.init({
+        precreateVersus = false,
         onSettled = function(_members, result, ctx)
             local summary = VersusStats.apply(ctx, result)
             table.insert(summaries, summary)

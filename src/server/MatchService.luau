@@ -1,13 +1,15 @@
 -- src/server/MatchService.luau
 -- Room manager. New players default to an independent practice room (1 human +
--- 1 bot). Versus tables are created lazily and hold two humans with a bounded
--- spectator audience; a player can move between modes through joinPractice /
--- joinVersus. All transport stays room-scoped in Room.luau.
+-- 1 bot). Versus tables are precreated/retained for the server's lifetime and
+-- hold two humans with a bounded spectator audience; a player can move between
+-- modes through joinPractice / joinVersus. All transport stays room-scoped in
+-- Room.luau.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local RoomName = require(Shared:WaitForChild("RoomName"))
 
 local Room = require(script.Parent:WaitForChild("Room"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
@@ -31,6 +33,14 @@ local scratch = {} -- reused per step: rooms are stepped from a stable copy
 local loadingPlayers = {} -- [Player] = true while their profile is still loading
 local lobbyPlayers = {} -- [Player] = true after leaving a room, before choosing another
 local settlementHandler = nil
+local filterRoomNameHandler = function(text)
+    return text
+end
+local notifyHandler = nil
+local now = os.clock
+local versusRoomSequence = 0
+local passwordAttempts = {} -- [Player] = { count = n, windowStart = t }
+local configAttempts = {} -- [Player] = { count = n, windowStart = t }
 
 -- Seat a record and keep the reverse index in sync. A fresh practice room can
 -- never reject its only human, but versus joins can lose a race with a seat
@@ -67,6 +77,7 @@ end
 
 local function createVersusRoom()
     nextRoomId += 1
+    versusRoomSequence += 1
     local room = Room.new({
         id = nextRoomId,
         mode = "versus",
@@ -75,6 +86,7 @@ local function createVersusRoom()
         maxSpectators = Constants.VERSUS_SPECTATORS,
         waitingTicks = Constants.WAITING_TICKS,
         resultsTicks = Constants.RESULTS_TICKS,
+        defaultName = "房间 " .. tostring(versusRoomSequence),
         random = Random.new(),
         onSettled = settlementHandler,
     })
@@ -92,6 +104,81 @@ local function countVersusRooms(): number
     return count
 end
 
+-- Fixed-window, per-player abuse guard. The clock is injected so headless tests
+-- can advance it without sleeping.
+local function consumeAttempt(store, player, maxAttempts, windowSeconds): boolean
+    local t = now()
+    local entry = store[player]
+    if not entry or t - entry.windowStart > windowSeconds then
+        entry = { count = 0, windowStart = t }
+        store[player] = entry
+    end
+    if entry.count >= maxAttempts then
+        return false
+    end
+    entry.count += 1
+    return true
+end
+
+-- Password failures are checked separately so a correct password does not count
+-- as a failed attempt, and only failures consume the budget.
+local function passwordBlocked(player): boolean
+    local entry = passwordAttempts[player]
+    if not entry then
+        return false
+    end
+    if now() - entry.windowStart > Constants.PASSWORD_ATTEMPT_WINDOW_SECONDS then
+        passwordAttempts[player] = nil
+        return false
+    end
+    return entry.count >= Constants.PASSWORD_ATTEMPT_MAX
+end
+
+local function recordPasswordFailure(player)
+    local t = now()
+    local entry = passwordAttempts[player]
+    if not entry or t - entry.windowStart > Constants.PASSWORD_ATTEMPT_WINDOW_SECONDS then
+        entry = { count = 0, windowStart = t }
+        passwordAttempts[player] = entry
+    end
+    entry.count += 1
+end
+
+local function sendNotice(record, message)
+    if notifyHandler == nil or record == nil or record.player == nil then
+        return
+    end
+    local ok, err = pcall(notifyHandler, record.player, message)
+    if not ok then
+        warn("[BnB] notice failed for " .. tostring(record.id) .. ": " .. tostring(err))
+    end
+end
+
+-- A versus room with no seats has no host. Its audience is read-only and can no
+-- longer see a match, so move each spectator to a fresh practice room and tell
+-- them why. The room itself is retained as an empty waiting table.
+local function evictSpectators(room)
+    local spectators = room:getSpectatorRecords()
+    for _, record in ipairs(spectators) do
+        if roomByPlayer[record.player] == room then
+            roomByPlayer[record.player] = nil
+        end
+        room:removeMember(record)
+    end
+    room:resetConfig()
+    room:resetForWaiting()
+
+    for _, record in ipairs(spectators) do
+        local ok, practice = pcall(createPracticeRoom, record)
+        if not ok then
+            warn(string.format("[BnB] could not move spectator %s to practice: %s", record.id, tostring(practice)))
+        elseif not practice then
+            warn("[BnB] practice room rejected spectator " .. record.id)
+        end
+        sendNotice(record, "房间内已没有对战玩家，房主为空，已返回练习")
+    end
+end
+
 -- Remove a record from whatever room it is in. This is synchronous: a versus
 -- round can finish here, which reports the leaver through the settlement hook
 -- before the player is seated somewhere else.
@@ -104,7 +191,13 @@ local function detachPlayer(player: Player, record): any
     if record then
         room:removeMember(record)
     end
-    if room:isEmpty() then
+    if room.mode == "versus" then
+        -- A versus table is retained, but a room with no seats has no host and
+        -- cannot continue. Move any remaining audience out.
+        if room:getSeatCount() == 0 then
+            evictSpectators(room)
+        end
+    elseif room:isEmpty() then
         rooms[room.id] = nil
     end
     return room
@@ -113,10 +206,14 @@ end
 -- Prefer a waiting table with an open seat, then a newly created table, and only
 -- then spectate an existing match. This keeps quick play out of the audience
 -- when there is still room to play.
+-- Quick join never enters a password room; the browser is the only place a
+-- password can be supplied. Locked tables are skipped entirely, including their
+-- spectator slots.
 local function findAutoVersusRoom()
     local waiting = nil
     for _, room in pairs(rooms) do
         if room.mode == "versus" and room.phase == "waiting" and not room:isFull()
+            and not room:hasPassword()
             and (waiting == nil or room.id < waiting.id) then
             waiting = room
         end
@@ -131,7 +228,7 @@ local function findAutoVersusRoom()
 
     local spectator = nil
     for _, room in pairs(rooms) do
-        if room.mode == "versus" and room:canAddMember() then
+        if room.mode == "versus" and not room:hasPassword() and room:canAddMember() then
             if spectator == nil
                 or room:getSpectatorCount() < spectator:getSpectatorCount()
                 or (room:getSpectatorCount() == spectator:getSpectatorCount() and room.id < spectator.id) then
@@ -142,24 +239,35 @@ local function findAutoVersusRoom()
     return spectator
 end
 
--- Drop a newly created but unused table so a failed join cannot leak a room.
-local function discardEmptyRoom(room)
-    if room and room.mode == "versus" and room:isEmpty() then
-        rooms[room.id] = nil
-    end
-end
-
 function MatchService.init(opts)
     opts = opts or {}
     rooms = {}
     roomByPlayer = {}
     nextRoomId = 0
+    versusRoomSequence = 0
     stepCount = 0
     failures = {}
     loadingPlayers = {}
     lobbyPlayers = {}
+    passwordAttempts = {}
+    configAttempts = {}
     table.clear(scratch)
     settlementHandler = opts.onSettled
+    filterRoomNameHandler = if type(opts.filterRoomName) == "function"
+        then opts.filterRoomName
+        else function(text)
+            return text
+        end
+    notifyHandler = if type(opts.notify) == "function" then opts.notify else nil
+    now = if type(opts.now) == "function" then opts.now else os.clock
+
+    -- Production runs with four persistent tables. Tests that assert exact lazy
+    -- creation counts can explicitly opt out.
+    if opts.precreateVersus ~= false then
+        for _ = 1, Constants.VERSUS_TABLES do
+            createVersusRoom()
+        end
+    end
 end
 
 -- Main marks a player as loading from PlayerAdded until the profile load ends
@@ -191,7 +299,7 @@ end
 
 local function recycleRoom(room, err)
     warn(string.format(
-        "[BnB] room %d (%s, phase=%s) failed and was closed: %s",
+        "[BnB] room %d (%s, phase=%s) failed and was recycled: %s",
         room.id,
         tostring(room.mode),
         tostring(room.phase),
@@ -199,7 +307,22 @@ local function recycleRoom(room, err)
     ))
 
     local members = table.clone(room.members)
-    detachRoom(room)
+    if room.mode == "versus" then
+        -- Persistent tables keep their registry slot. A broken round is reset in
+        -- place; the table stays browsable and reusable.
+        for _, record in ipairs(members) do
+            if roomByPlayer[record.player] == room then
+                roomByPlayer[record.player] = nil
+            end
+        end
+        local ok, resetErr = pcall(room.resetEmpty, room)
+        if not ok then
+            warn(string.format("[BnB] could not reset versus room %d: %s", room.id, tostring(resetErr)))
+            rooms[room.id] = nil
+        end
+    else
+        detachRoom(room)
+    end
 
     for _, record in ipairs(members) do
         if mayReseat(record.player) then
@@ -231,7 +354,18 @@ function MatchService.step()
     for _, room in ipairs(scratch) do
         if rooms[room.id] == room then
             if room:isEmpty() then
-                rooms[room.id] = nil
+                if room.mode == "practice" then
+                    rooms[room.id] = nil
+                elseif room.phase ~= "waiting"
+                    or room.hostId ~= nil
+                    or room:hasPassword()
+                    or room.name ~= room.defaultName then
+                    -- Empty versus tables are retained, but must not keep an old
+                    -- round, host or password. This is a safety net for paths that
+                    -- drop the last member without going through detachPlayer.
+                    room:resetConfig()
+                    room:resetForWaiting()
+                end
             else
                 local ok, err = pcall(room.step, room)
                 if not ok then
@@ -256,6 +390,8 @@ function MatchService.onPlayerRemoving(player: Player, record)
     failures[player] = nil
     loadingPlayers[player] = nil
     lobbyPlayers[player] = nil
+    passwordAttempts[player] = nil
+    configAttempts[player] = nil
     detachPlayer(player, record)
 end
 
@@ -286,10 +422,10 @@ function MatchService.joinPractice(player: Player): (boolean, string?, number?)
 end
 
 -- Join a specific versus table, or pick one automatically when tableId is nil.
--- A specific table is validated before the player leaves their current room, so
--- a failed switch never strands them. Quick join while already seated at a
--- versus table keeps that table instead of hopping around.
-function MatchService.joinVersus(player: Player, tableId: number?): (boolean, string?, number?)
+-- A specific table is validated and password-checked before the player leaves
+-- their current room, so a failed switch never strands them. Quick join while
+-- already seated at a versus table keeps that table instead of hopping around.
+function MatchService.joinVersus(player: Player, tableId: number?, password: any): (boolean, string?, number?)
     local record = PlayerService.get(player)
     if not record then
         return false, "not_loaded", nil
@@ -317,8 +453,22 @@ function MatchService.joinVersus(player: Player, tableId: number?): (boolean, st
     end
 
     if target ~= current and not target:canAddMember() then
-        discardEmptyRoom(target)
         return false, "table_full", nil
+    end
+
+    if target:hasPassword() then
+        if passwordBlocked(player) then
+            return false, "too_many_attempts", nil
+        end
+        if type(password) ~= "string" then
+            recordPasswordFailure(player)
+            return false, "password_required", nil
+        end
+        if not target:checkPassword(password) then
+            recordPasswordFailure(player)
+            return false, "wrong_password", nil
+        end
+        passwordAttempts[player] = nil
     end
 
     if current then
@@ -326,7 +476,6 @@ function MatchService.joinVersus(player: Player, tableId: number?): (boolean, st
     end
 
     if not attachPlayer(target, record) then
-        discardEmptyRoom(target)
         -- The old room is gone at this point; give the player a safe fallback
         -- rather than leaving them with no state to sync.
         createPracticeRoom(record)
@@ -336,7 +485,7 @@ function MatchService.joinVersus(player: Player, tableId: number?): (boolean, st
 end
 
 -- Remote-facing entry point. Accepts "practice", "versus", a table id, or a
--- { mode = "practice" | "versus", tableId = n? } request.
+-- { mode = "practice" | "versus", tableId = n?, password = s? } request.
 function MatchService.join(player: Player, target: any): (boolean, string?, number?)
     if target == nil or target == "practice" then
         return MatchService.joinPractice(player)
@@ -351,18 +500,112 @@ function MatchService.join(player: Player, target: any): (boolean, string?, numb
         if target.mode == "practice" then
             return MatchService.joinPractice(player)
         elseif target.mode == "versus" then
-            local tableId = target.tableId
-            if tableId == nil then
-                return MatchService.joinVersus(player, nil)
-            end
-            return MatchService.joinVersus(player, tableId)
+            return MatchService.joinVersus(player, target.tableId, target.password)
         end
     end
     return false, "invalid_target", nil
 end
 
+local function isValidPassword(password: string): boolean
+    local length = #password
+    return length >= Constants.ROOM_PASSWORD_MIN_DIGITS
+        and length <= Constants.ROOM_PASSWORD_MAX_DIGITS
+        and password:match("^%d+$") ~= nil
+end
+
+-- Host-only room configuration. The request is validated and rate-limited here;
+-- Room only applies the result. Text filtering can yield, so membership, host
+-- identity and phase are rechecked before anything is written.
+function MatchService.setRoomConfig(player: Player, request): (boolean, string?)
+    local record = PlayerService.get(player)
+    if not record then
+        return false, "not_loaded"
+    end
+    local room = roomByPlayer[player]
+    if not room then
+        return false, "not_in_room"
+    end
+    if room.mode ~= "versus" then
+        return false, "not_versus"
+    end
+    if room:getHostId() ~= record.id then
+        return false, "not_host"
+    end
+    if room.phase ~= "waiting" then
+        return false, "not_waiting"
+    end
+
+    if type(request) ~= "table" then
+        return false, "invalid_request"
+    end
+    local rawName = request.name
+    local rawPassword = request.password
+    if rawName == nil and rawPassword == nil then
+        return false, "invalid_request"
+    end
+    if rawName ~= nil and type(rawName) ~= "string" then
+        return false, "invalid_request"
+    end
+    if rawPassword ~= nil and type(rawPassword) ~= "string" then
+        return false, "invalid_request"
+    end
+
+    if not consumeAttempt(
+        configAttempts,
+        player,
+        Constants.ROOM_CONFIG_ATTEMPT_MAX,
+        Constants.ROOM_CONFIG_WINDOW_SECONDS
+    ) then
+        return false, "config_rate_limited"
+    end
+
+    local passwordUpdate = nil
+    if rawPassword ~= nil then
+        if rawPassword ~= "" and not isValidPassword(rawPassword) then
+            return false, "invalid_password"
+        end
+        passwordUpdate = rawPassword
+    end
+
+    local nameUpdate = nil
+    if rawName ~= nil then
+        local normalized, nameError = RoomName.normalize(rawName)
+        if not normalized then
+            return false, nameError or "invalid_name"
+        end
+        local ok, filtered = pcall(filterRoomNameHandler, normalized, player.UserId)
+        if not ok or type(filtered) ~= "string" then
+            return false, "filter_failed"
+        end
+        local validated, filterError = RoomName.validateFiltered(filtered)
+        if not validated then
+            return false, filterError or "filter_failed"
+        end
+        nameUpdate = validated
+    end
+
+    -- TextService can take a frame; the host may have left, the host may have
+    -- changed, or the countdown may have started while the filter was running.
+    if rooms[room.id] ~= room or roomByPlayer[player] ~= room then
+        return false, "not_in_room"
+    end
+    if room:getHostId() ~= record.id then
+        return false, "not_host"
+    end
+    if room.phase ~= "waiting" then
+        return false, "not_waiting"
+    end
+
+    local ok, reason = room:setConfig(record.id, nameUpdate, passwordUpdate)
+    if not ok then
+        return false, reason
+    end
+    return true, nil
+end
+
 -- Public table browser data. Returned tables are copies; the client can never
--- mutate a live room through this payload.
+-- mutate a live room through this payload, and the password itself never leaves
+-- the server.
 function MatchService.getTables()
     local list = {}
     for _, room in pairs(rooms) do
@@ -372,6 +615,10 @@ function MatchService.getTables()
                 id = room.id,
                 mode = room.mode,
                 phase = room.phase,
+                name = room:getRoomName(),
+                hostId = room:getHostId(),
+                hostName = room:getHostName(),
+                hasPassword = room:hasPassword(),
                 seats = room:getSeatSummary(),
                 seatCount = room:getSeatCount(),
                 maxPlayers = room.maxPlayers,

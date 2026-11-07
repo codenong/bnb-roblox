@@ -188,4 +188,104 @@ do
     check("returning to practice closes the browser", Env.lobbyOpen == false)
 end
 
+---------------------------------------------------------------- 通知 toast
+do
+    Env.notices = nil
+    fire("Notice", { message = "房间内已没有对战玩家，房主为空，已返回练习" })
+    fire("Notice", "字符串通知")
+    fire("Notice", { message = "" })
+    fire("Notice", 42)
+    check("a Notice table shows a toast", Env.notices and #Env.notices == 2, Env.notices and #Env.notices)
+    check("a Notice string is accepted", Env.notices and Env.notices[2] == "字符串通知")
+    check("empty/invalid Notices are ignored", Env.notices and #Env.notices == 2)
+end
+
+---------------------------------------------------------------- 密码房选择原样转发
+do
+    local joinRemote = Env.remotes.JoinTable
+    Env.invokeResponses.JoinTable = function()
+        return { ok = true }
+    end
+    Env.syncResponse = { phase = "waiting", roomId = 42, roundId = 0, roster = {}, yourId = "u1", grid = {} }
+    Env.signals.tableSelected({ mode = "versus", tableId = 42, password = "1234" })
+    check("password selection reaches the server", joinRemote.lastArgs[1].password == "1234"
+        and joinRemote.lastArgs[1].tableId == 42, joinRemote.lastArgs[1].password)
+
+    Env.invokeResponses.JoinTable = function()
+        return { ok = false, reason = "password_required" }
+    end
+    Env.signals.tableSelected({ mode = "versus", tableId = 42 })
+    check("a missing password is explained", Env.lobbyMessage == "请输入房间密码", Env.lobbyMessage)
+
+    Env.invokeResponses.JoinTable = function()
+        return { ok = false, reason = "wrong_password" }
+    end
+    Env.signals.tableSelected({ mode = "versus", tableId = 42, password = "0000" })
+    check("a wrong password is explained", Env.lobbyMessage == "密码错误", Env.lobbyMessage)
+
+    Env.invokeResponses.JoinTable = function()
+        return { ok = false, reason = "too_many_attempts" }
+    end
+    Env.signals.tableSelected({ mode = "versus", tableId = 42, password = "0000" })
+    check("a password lockout is explained", Env.lobbyMessage == "密码错误次数过多，请稍后再试", Env.lobbyMessage)
+
+    Env.invokeResponses.JoinTable = function()
+        return { ok = false, reason = "no_tables" }
+    end
+    Env.signals.tableSelected("versus")
+    check("quick join explains password-only tables", Env.lobbyMessage == "没有可直接加入的桌子；密码房请在列表中选择",
+        Env.lobbyMessage)
+end
+
+---------------------------------------------------------------- 房主设置
+do
+    local configRemote = Env.remotes.SetRoomConfig
+    Env.invokeResponses.SetRoomConfig = function()
+        return { ok = true }
+    end
+    Env.roomConfigResults = nil
+    Env.signals.roomConfigSubmitted({ name = "朋友", password = "1234" })
+    check("room config reaches the server", configRemote.lastArgs[1].name == "朋友"
+        and configRemote.lastArgs[1].password == "1234")
+    check("successful config closes the settings dialog", Env.roomConfigResults
+        and #Env.roomConfigResults == 1 and Env.roomConfigResults[1].ok == true
+        and Env.roomConfigResults[1].message == nil)
+
+    Env.invokeResponses.SetRoomConfig = function()
+        return { ok = false, reason = "not_host" }
+    end
+    Env.signals.roomConfigSubmitted({ name = "朋友" })
+    check("config permission errors are shown", Env.roomConfigResults
+        and Env.roomConfigResults[2].ok == false
+        and Env.roomConfigResults[2].message == "只有房主可以修改设置")
+
+    Env.invokeResponses.SetRoomConfig = function()
+        return { ok = false, reason = "invalid_password" }
+    end
+    Env.signals.roomConfigSubmitted({ password = "12" })
+    check("config validation errors are shown", Env.roomConfigResults
+        and Env.roomConfigResults[3].message == "密码需为 4–6 位数字")
+
+    Env.invokeResponses.SetRoomConfig = function()
+        error("remote failed")
+    end
+    Env.signals.roomConfigSubmitted({ name = "朋友" })
+    check("a throwing config remote is reported", Env.roomConfigResults
+        and Env.roomConfigResults[4].ok == false
+        and Env.roomConfigResults[4].message == "保存失败，请重试")
+
+    Env.invokeResponses.SetRoomConfig = function()
+        return nil
+    end
+    Env.signals.roomConfigSubmitted({ name = "朋友" })
+    check("a non-table config answer is reported", Env.roomConfigResults
+        and Env.roomConfigResults[5].ok == false)
+
+    local invokesBefore = configRemote.invokes
+    Env.signals.roomConfigSubmitted("not a table")
+    check("a non-table config request is rejected locally", configRemote.invokes == invokesBefore)
+    check("a non-table config request is explained", Env.roomConfigResults
+        and Env.roomConfigResults[6].message == "设置内容无效")
+end
+
 TestLib.finish()

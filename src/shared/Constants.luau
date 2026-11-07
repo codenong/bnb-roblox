@@ -67,12 +67,24 @@ local Constants = {
     CHAR_LOCK_SECONDS = 3,
     CHAR_LOCK_TICKS = 3 * 30,
 
-    -- Versus tables. Tables are created lazily; this caps how many can exist at
-    -- once. Spectators are capped per table so a popular match cannot turn into
-    -- an unbounded snapshot fan-out.
+    -- Versus tables are precreated and retained for the server's lifetime; this
+    -- caps how many can exist at once. Spectators are capped per table so a
+    -- popular match cannot turn into an unbounded snapshot fan-out.
     VERSUS_PLAYERS = 2,
     VERSUS_TABLES = 4,
     VERSUS_SPECTATORS = 4,
+    -- Room-name/password rules. Names are measured in Unicode codepoints and are
+    -- filtered by the server before they are stored.
+    ROOM_NAME_MAX_CODEPOINTS = 30,
+    ROOM_PASSWORD_MIN_DIGITS = 4,
+    ROOM_PASSWORD_MAX_DIGITS = 6,
+    -- Fixed-window abuse guards, per player. A correct password clears the
+    -- password-failure window; successful config changes do not clear theirs.
+    PASSWORD_ATTEMPT_MAX = 5,
+    PASSWORD_ATTEMPT_WINDOW_SECONDS = 30,
+    ROOM_CONFIG_ATTEMPT_MAX = 5,
+    ROOM_CONFIG_WINDOW_SECONDS = 10,
+    NOTICE_SECONDS = 3.5,
     -- A game must last this long to count toward versus stats. A round that ends
     -- because a participant left is still a loss/win (quitting must not dodge it).
     VERSUS_MIN_SECONDS = 15,

@@ -6,6 +6,7 @@ local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TextService = game:GetService("TextService")
 
 -- The game is rendered entirely in a ScreenGui; never spawn a Roblox character.
 Players.CharacterAutoLoads = false
@@ -93,7 +94,34 @@ local function onSettled(members, result, context)
     end
 end
 
-MatchService.init({ onSettled = onSettled })
+-- Room names are user text shown to every player browsing the table list, so they
+-- must go through Roblox filtering before they are stored. Filtering can yield;
+-- MatchService rechecks host/phase after this returns.
+local function filterRoomName(text: string, userId: number): string?
+    local ok, result = pcall(function()
+        return TextService:FilterStringAsync(text, userId, Enum.TextFilterContext.PublicChat)
+    end)
+    if not ok or not result then
+        return nil
+    end
+    local okFiltered, filtered = pcall(function()
+        return result:GetNonChatStringForBroadcastAsync()
+    end)
+    if not okFiltered or type(filtered) ~= "string" or filtered == "" then
+        return nil
+    end
+    return filtered
+end
+
+local function notify(player: Player, message: string)
+    Net.send(player, "Notice", { message = message })
+end
+
+MatchService.init({
+    onSettled = onSettled,
+    filterRoomName = filterRoomName,
+    notify = notify,
+})
 
 game:BindToClose(function()
     profiles:shutdown()
@@ -133,6 +161,11 @@ end
 Net.get("JoinTable").OnServerInvoke = function(player, target)
     local ok, reason, roomId = MatchService.join(player, target)
     return { ok = ok == true, reason = reason, roomId = roomId }
+end
+
+Net.get("SetRoomConfig").OnServerInvoke = function(player, request)
+    local ok, reason = MatchService.setRoomConfig(player, request)
+    return { ok = ok == true, reason = reason }
 end
 
 ---------------------------------------------------------------- 玩家进出
