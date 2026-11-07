@@ -36,7 +36,6 @@ local loadingPlayers = {} -- [Player] = true while their profile is still loadin
 local lobbyPlayers = {} -- [Player] = true after leaving a room, before choosing another
 local settlementHandler = nil
 local usageSettlementHandler = nil
-local loadoutChangedHandler = nil
 local filterRoomNameHandler = function(text)
     return text
 end
@@ -260,7 +259,6 @@ function MatchService.init(opts)
     table.clear(scratch)
     settlementHandler = opts.onSettled
     usageSettlementHandler = opts.onUsageSettled
-    loadoutChangedHandler = opts.onLoadoutChanged
     filterRoomNameHandler = if type(opts.filterRoomName) == "function"
         then opts.filterRoomName
         else function(text)
@@ -657,10 +655,10 @@ end
 
 ---------------------------------------------------------------- 商店与道具
 
-local function shopItem(profile, itemId: string)
+local function shopItem(profile, itemId: string, mode: any)
     local info = Shop.ITEMS[itemId]
     local free, purchased = Shop.stock(profile, itemId)
-    local loadout = Shop.loadoutValue(profile, itemId)
+    local carry = Shop.effectiveCarry(profile, mode)
     local product = ShopConfig.getProduct(itemId)
     return {
         id = itemId,
@@ -668,19 +666,19 @@ local function shopItem(profile, itemId: string)
         short = info.short,
         description = info.description,
         cap = info.cap,
-        loadout = loadout,
         free = free,
         purchased = purchased,
         stock = free + purchased,
-        carry = math.min(loadout, free + purchased, info.cap),
+        carry = carry[itemId],
         purchasable = product ~= nil,
         productId = if product then product.productId else nil,
         amount = if product then product.amount else nil,
     }
 end
 
--- Snapshot used by the shop panel. Prices stay in the Roblox purchase prompt;
--- this only exposes ids, stock and the current loadout intent.
+-- Snapshot used by the shop panel and the lobby's "我的道具" summary. Prices
+-- stay in the Roblox purchase prompt; this only exposes ids, stock and the
+-- automatic carry for the current context.
 function MatchService.getShop(player: Player)
     local record = PlayerService.get(player)
     if not record or type(record.profile) ~= "table" then
@@ -690,81 +688,19 @@ function MatchService.getShop(player: Player)
     local room = roomByPlayer[player]
     local phase = if room then room.phase else nil
     local mode = if room then room.mode else nil
-    local locked = false
-    if room then
-        locked = room.phase ~= "waiting" or room:isCharLocked()
-    end
 
     local items = {}
     for _, itemId in ipairs(Shop.ITEM_ORDER) do
-        table.insert(items, shopItem(record.profile, itemId))
+        table.insert(items, shopItem(record.profile, itemId, mode))
     end
 
     return {
         ok = true,
         items = items,
-        locked = locked,
         phase = phase,
         mode = mode,
-        consumeInPractice = ShopConfig.CONSUME_IN_PRACTICE,
-        practiceFree = mode == "practice"
-            and not Shop.shouldConsume("practice", ShopConfig.CONSUME_IN_PRACTICE),
+        practice = mode == "practice",
     }
-end
-
--- Full replacement of the known loadout fields. Values are clamped to each
--- item's entry cap but not to current stock: intent survives buying/selling or
--- temporarily running out. Unknown loadout fields already on the profile are
--- preserved.
-function MatchService.setLoadout(player: Player, request)
-    local record = PlayerService.get(player)
-    if not record or type(record.profile) ~= "table" then
-        return { ok = false, reason = "not_loaded" }
-    end
-    if type(request) ~= "table" or type(request.loadout) ~= "table" then
-        return { ok = false, reason = "invalid_request" }
-    end
-
-    local room = roomByPlayer[player]
-    if room then
-        if room.phase ~= "waiting" then
-            return { ok = false, reason = "not_waiting" }
-        end
-        if room:isCharLocked() then
-            return { ok = false, reason = "locked" }
-        end
-    end
-
-    local requested = request.loadout
-    local nextLoadout = Shop.normalizeLoadout(record.profile.loadout)
-    for _, itemId in ipairs(Shop.ITEM_ORDER) do
-        local value = requested[itemId]
-        if value == nil then
-            value = 0
-        end
-        if type(value) ~= "number"
-            or value ~= value
-            or value == math.huge
-            or value == -math.huge
-            or value < 0
-            or value % 1 ~= 0 then
-            return { ok = false, reason = "invalid_request" }
-        end
-        nextLoadout[itemId] = Shop.clampLoadoutValue(itemId, value)
-    end
-
-    record.profile.loadout = nextLoadout
-    if loadoutChangedHandler then
-        local ok, err = pcall(loadoutChangedHandler, record)
-        if not ok then
-            warn("[BnB] loadout commit hook failed: " .. tostring(err))
-        end
-    end
-    if room and room.phase == "waiting" then
-        room:refreshLoadouts()
-    end
-
-    return { ok = true, shop = MatchService.getShop(player) }
 end
 
 -- Re-read stock after a purchase and refresh the waiting roster's carry lines.
@@ -772,7 +708,7 @@ end
 function MatchService.refreshShop(player: Player)
     local room = roomByPlayer[player]
     if room and room.phase == "waiting" then
-        room:refreshLoadouts()
+        room:refreshInventory()
     end
     return MatchService.getShop(player)
 end

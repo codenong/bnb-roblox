@@ -24,7 +24,6 @@ local MatchService = require(script.Parent:WaitForChild("MatchService"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
-local ShopConfig = require(script.Parent:WaitForChild("ShopConfig"))
 local ShopService = require(script.Parent:WaitForChild("ShopService"))
 local VersusStats = require(script.Parent:WaitForChild("VersusStats"))
 
@@ -100,13 +99,14 @@ end
 
 -- Item settlement is deliberately separate from stats settlement: BindToClose
 -- charges used items but must not record a versus result for an unfinished
--- round. Practice is free unless ShopConfig opts into real consumption.
+-- round. Practice never carries stock, so its carried snapshot is all zeros and
+-- settlement has nothing to charge.
 local function onUsageSettled(record, used, carried, context)
     if not record or type(record.profile) ~= "table" then
         return
     end
     local mode = if context then context.mode else nil
-    if not Shop.shouldConsume(mode, ShopConfig.CONSUME_IN_PRACTICE) then
+    if mode == "practice" then
         return
     end
 
@@ -122,10 +122,6 @@ local function onUsageSettled(record, used, carried, context)
     if changed then
         profiles:commitMany({ record })
     end
-end
-
-local function onLoadoutChanged(record)
-    profiles:commitMany({ record })
 end
 
 -- Room names are user text shown to every player browsing the table list, so they
@@ -154,7 +150,6 @@ end
 MatchService.init({
     onSettled = onSettled,
     onUsageSettled = onUsageSettled,
-    onLoadoutChanged = onLoadoutChanged,
     filterRoomName = filterRoomName,
     notify = notify,
 })
@@ -229,15 +224,6 @@ Net.get("GetShop").OnServerInvoke = function(player)
         return { ok = false, reason = "server_error" }
     end
     return snapshot
-end
-
-Net.get("SetLoadout").OnServerInvoke = function(player, request)
-    local ok, result = pcall(MatchService.setLoadout, player, request)
-    if not ok then
-        warn("[BnB] SetLoadout failed for " .. tostring(player.UserId) .. ": " .. tostring(result))
-        return { ok = false, reason = "server_error" }
-    end
-    return result
 end
 
 -- Roblox gives ProcessReceipt time to yield (profile flush/direct DataStore save).

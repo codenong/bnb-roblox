@@ -1,4 +1,6 @@
--- Pure shop rules: loadout intent, effective carry and free-first settlement.
+-- Pure shop rules: automatic versus carry, practice zero carry, inventory
+-- summaries and free-first settlement. The legacy loadout field is still
+-- normalized but must never influence what a round carries.
 -- Loaded by tests/run.sh from tests/build.
 local TestLib = require("./testlib")
 local check = TestLib.check
@@ -30,7 +32,7 @@ check("a fresh loadout is empty", Shop.newLoadout().needle == 0
     and Shop.newLoadout().remote == 0
     and Shop.newLoadout().kick == 0)
 
----------------------------------------------------------------- 归一化 / 夹取
+---------------------------------------------------------------- 档案兼容：loadout 仍可归一化，但不参与携带
 
 check("negative loadout clamps to zero", Shop.clampLoadoutValue("needle", -2) == 0)
 check("fractional loadout floors", Shop.clampLoadoutValue("needle", 1.9) == 1)
@@ -44,32 +46,72 @@ check("normalization clamps known fields", unknown.needle == 2, unknown.needle)
 check("normalization keeps unknown fields", unknown.extra == "kept")
 check("normalization fills missing fields", unknown.remote == 0 and unknown.kick == 0)
 
----------------------------------------------------------------- 库存与实带
+---------------------------------------------------------------- 库存与自动实带
 
 local profile = profileWith({
     needle = { free = 1, purchased = 1 },
     remote = { purchased = 1 },
     kick = { free = 1 },
-}, { needle = 2, remote = 1, kick = 1 })
+}, { needle = 0, remote = 0, kick = 0 })
 
 local free, purchased = Shop.stock(profile, "needle")
 check("stock reports both buckets", free == 1 and purchased == 1)
 check("total stock adds both buckets", Shop.totalStock(profile, "needle") == 2)
-check("loadout is capped at entry capacity", Shop.loadoutValue(profile, "needle") == 2)
 
-local carry = Shop.effectiveCarry(profile)
-check("effective carry uses the loadout", carry.needle == 2, carry.needle)
-check("effective carry is capped by stock", carry.remote == 1, carry.remote)
-check("effective carry includes kick", carry.kick == 1, carry.kick)
+local carry = Shop.effectiveCarry(profile, "versus")
+check("versus carries the full needle stock up to the cap", carry.needle == 2, carry.needle)
+check("versus carries the full remote stock", carry.remote == 1, carry.remote)
+check("versus carries the full kick stock", carry.kick == 1, carry.kick)
+check("an old zero loadout no longer limits the carry", carry.needle == 2)
 
 profile.loadout.needle = 2
 profile.inventory.needle.free = 0
 profile.inventory.needle.purchased = 1
-check("buying or running out changes the effective carry",
-    Shop.effectiveCarry(profile).needle == 1)
+check("running out lowers the automatic carry", Shop.effectiveCarry(profile, "versus").needle == 1)
 profile.inventory.needle.purchased = 0
-check("an empty stock never erases loadout intent",
-    Shop.loadoutValue(profile, "needle") == 2 and Shop.effectiveCarry(profile).needle == 0)
+check("an empty stock carries zero", Shop.effectiveCarry(profile, "versus").needle == 0)
+check("stock changes never need a loadout edit",
+    Shop.loadoutValue(profile, "needle") == 2
+        and Shop.effectiveCarry(profile, "versus").needle == 0)
+
+local capped = profileWith({
+    needle = { purchased = 7 },
+    remote = { purchased = 5 },
+    kick = { purchased = 4 },
+})
+local cappedCarry = Shop.effectiveCarry(capped, "versus")
+check("needle auto carry stops at 2", cappedCarry.needle == 2, cappedCarry.needle)
+check("remote auto carry stops at 1", cappedCarry.remote == 1, cappedCarry.remote)
+check("kick auto carry stops at 1", cappedCarry.kick == 1, cappedCarry.kick)
+
+local practiceCarry = Shop.effectiveCarry(capped, "practice")
+check("practice carries no needle", practiceCarry.needle == 0, practiceCarry.needle)
+check("practice carries no remote", practiceCarry.remote == 0, practiceCarry.remote)
+check("practice carries no kick", practiceCarry.kick == 0, practiceCarry.kick)
+
+local roomlessCarry = Shop.effectiveCarry(capped)
+check("a roomless player still sees the next versus carry",
+    roomlessCarry.needle == 2 and roomlessCarry.remote == 1 and roomlessCarry.kick == 1)
+
+---------------------------------------------------------------- 库存展示
+
+local summary = Shop.inventorySummary(profileWith({
+    needle = { free = 1, purchased = 2 },
+    kick = { purchased = 1 },
+}), "versus")
+check("the inventory summary follows catalog order",
+    summary[1].id == "needle" and summary[2].id == "remote" and summary[3].id == "kick")
+check("the summary exposes free and purchased stock",
+    summary[1].free == 1 and summary[1].purchased == 2 and summary[1].stock == 3)
+check("the summary includes the automatic carry",
+    summary[1].carry == 2 and summary[2].carry == 0 and summary[3].carry == 1)
+check("practice summary shows zero carry",
+    Shop.inventorySummary(profileWith({ needle = { purchased = 2 } }), "practice")[1].carry == 0)
+check("owned description lists only owned items",
+    Shop.describeOwned(summary) == "逃生针 3（免费 1 · 购买 2） · 踢泡泡 1（免费 0 · 购买 1）",
+    Shop.describeOwned(summary))
+check("an empty inventory is described explicitly",
+    Shop.describeOwned(Shop.inventorySummary(profileWith({}), "versus")) == "还没有道具")
 
 ---------------------------------------------------------------- 用量计费
 
@@ -86,6 +128,8 @@ local noCharge = Shop.usageCharge({}, { needle = 2, remote = 2, kick = 1 })
 check("using only pickups costs nothing", noCharge.needle == 0
     and noCharge.remote == 0
     and noCharge.kick == 0)
+check("practice's empty carry charges nothing",
+    Shop.usageCharge(Shop.effectiveCarry(capped, "practice"), { needle = 2, remote = 2, kick = 1 }).needle == 0)
 local malformed = Shop.usageCharge({ needle = "x", remote = 0 / 0 }, { needle = 2, remote = 2 })
 check("malformed carries never charge", malformed.needle == 0 and malformed.remote == 0)
 
@@ -123,13 +167,6 @@ check("no carried stock means no charge", zeroSpent.needle.free == 0 and zeroSpe
 check("no carried stock leaves the profile alone", untouched.inventory.needle.free == 1)
 local badSpent = Shop.settleUsage(nil, { needle = 1 }, { needle = 1 })
 check("an invalid profile returns zero spend", badSpent.needle.free == 0 and badSpent.needle.purchased == 0)
-
----------------------------------------------------------------- 练习模式消耗开关
-
-check("practice is free by default", Shop.shouldConsume("practice", false) == false)
-check("the test switch can charge practice", Shop.shouldConsume("practice", true) == true)
-check("versus always charges", Shop.shouldConsume("versus", false) == true)
-check("unknown modes are charged", Shop.shouldConsume(nil, false) == true)
 
 ---------------------------------------------------------------- 展示
 

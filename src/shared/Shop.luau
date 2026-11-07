@@ -1,11 +1,12 @@
 -- src/shared/Shop.luau
--- Pure shop/loadout rules shared by the server and the client. There is no
+-- Pure shop/inventory rules shared by the server and the client. There is no
 -- Roblox service access here: the catalog is data, the inventory lives in the
 -- profile, and settlement only mutates plain tables.
 --
--- Loadouts are player intent, clamped to each item's entry cap. The effective
--- carry is min(loadout, owned stock, cap), so buying more stock never changes a
--- saved loadout and a temporarily empty stock never erases it.
+-- Versus rounds automatically carry min(owned stock, entry cap) of every item;
+-- the player has no loadout editor. Practice rounds carry nothing and never
+-- consume saved stock. `loadout` is still normalized in the profile schema for
+-- old-profile compatibility, but it is deliberately ignored by the carry rules.
 
 local Shop = {}
 
@@ -111,6 +112,7 @@ function Shop.stock(profile: any, itemId: any): (number, number)
     return nonNegativeInt(bucket.free), nonNegativeInt(bucket.purchased)
 end
 
+-- Legacy compatibility only. The carry rules no longer read `profile.loadout`.
 function Shop.loadoutValue(profile: any, itemId: any): number
     if not Shop.isItemId(itemId) or type(profile) ~= "table" then
         return 0
@@ -122,14 +124,70 @@ function Shop.loadoutValue(profile: any, itemId: any): number
     return Shop.clampLoadoutValue(itemId, loadout[itemId])
 end
 
--- The number of each item actually brought into the round.
-function Shop.effectiveCarry(profile: any): { [string]: number }
+-- The number of each item actually brought into the round. Versus (and a player
+-- browsing between rooms) automatically carries as much stock as the entry cap
+-- allows; practice carries nothing.
+function Shop.effectiveCarry(profile: any, mode: any): { [string]: number }
     local carry = {}
+    local practice = mode == "practice"
     for _, itemId in ipairs(Shop.ITEM_ORDER) do
-        local wanted = Shop.loadoutValue(profile, itemId)
-        carry[itemId] = math.min(wanted, Shop.totalStock(profile, itemId), Shop.ITEMS[itemId].cap)
+        carry[itemId] = if practice
+            then 0
+            else math.min(Shop.totalStock(profile, itemId), Shop.ITEMS[itemId].cap)
     end
     return carry
+end
+
+-- Read-only inventory rows for the waiting screen. MatchService builds its own
+-- shop rows because purchases also need product metadata.
+function Shop.inventorySummary(profile: any, mode: any)
+    local carry = Shop.effectiveCarry(profile, mode)
+    local entries = {}
+    for _, itemId in ipairs(Shop.ITEM_ORDER) do
+        local info = Shop.ITEMS[itemId]
+        local free, purchased = Shop.stock(profile, itemId)
+        table.insert(entries, {
+            id = itemId,
+            name = info.name,
+            short = info.short,
+            free = free,
+            purchased = purchased,
+            stock = free + purchased,
+            cap = info.cap,
+            carry = carry[itemId],
+        })
+    end
+    return entries
+end
+
+-- Short "逃生针 2（免费 1 · 购买 1）" line for read-only summaries. Only owned
+-- items are listed; an empty result is described explicitly.
+function Shop.describeOwned(entries: any): string
+    if type(entries) ~= "table" then
+        return "还没有道具"
+    end
+    local parts = {}
+    for _, itemId in ipairs(Shop.ITEM_ORDER) do
+        for _, entry in ipairs(entries) do
+            if type(entry) == "table" and entry.id == itemId then
+                local stock = nonNegativeInt(entry.stock)
+                if stock > 0 then
+                    local free = nonNegativeInt(entry.free)
+                    local purchased = nonNegativeInt(entry.purchased)
+                    local name = if type(entry.name) == "string" then entry.name else itemId
+                    table.insert(
+                        parts,
+                        string.format("%s %d（免费 %d · 购买 %d）", name, stock, free, purchased)
+                    )
+                end
+                break
+            end
+        end
+    end
+    if #parts == 0 then
+        return "还没有道具"
+    end
+    return table.concat(parts, " · ")
 end
 
 local function usageOf(used: any, itemId: string): number
@@ -184,14 +242,8 @@ function Shop.settleUsage(profile: any, carry: any, used: any)
     return spent, charge
 end
 
--- Practice rounds are free by default. The server config can flip this switch
--- when it needs to test real inventory consumption.
-function Shop.shouldConsume(mode: any, consumeInPractice: boolean): boolean
-    if mode == "practice" then
-        return consumeInPractice == true
-    end
-    return true
-end
+-- Practice never charges because its carry snapshot is zero. Versus charges only
+-- what was actually carried and successfully used.
 
 -- Short "针2 遥1 踢" line used by the waiting roster and the sidebar.
 function Shop.describeItems(items: any): string

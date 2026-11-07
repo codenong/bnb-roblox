@@ -17,8 +17,7 @@
 --                                    -> ok, reason, roomId
 -- SetRoomConfig C<=>S RemoteFunction {name?, password?} -> ok, reason
 --                                    host only, waiting only; password "" clears
--- GetShop      C<=>S RemoteFunction  () -> {ok, items, locked, ...} shop snapshot
--- SetLoadout   C<=>S RemoteFunction  {loadout} -> {ok, reason?, shop?}
+-- GetShop      C<=>S RemoteFunction  () -> {ok, items, mode, ...} shop snapshot
 -- ShopUpdate   S->C RemoteEvent      fresh shop snapshot after a purchase
 -- Notice       S->C RemoteEvent      {message} targeted transient toast
 --
@@ -47,7 +46,6 @@ local DEFINITIONS = {
     LeaveTable = "RemoteFunction",
     SetRoomConfig = "RemoteFunction",
     GetShop = "RemoteFunction",
-    SetLoadout = "RemoteFunction",
     ShopUpdate = "RemoteEvent",
     Notice = "RemoteEvent",
 }

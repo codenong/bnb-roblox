@@ -25,7 +25,6 @@ Hud.roomConfigSubmitted = Instance.new("BindableEvent")
 -- Shop panel intent. Requests are answered by Main.client through the server
 -- remotes; the HUD never calls a remote directly.
 Hud.shopRequested = Instance.new("BindableEvent")
-Hud.loadoutChangeRequested = Instance.new("BindableEvent") -- { loadout = {...} }
 Hud.purchaseRequested = Instance.new("BindableEvent") -- productId number
 
 local PANEL = Color3.fromRGB(12, 27, 42)
@@ -79,12 +78,14 @@ local waitingSubtitle
 local waitingInfo
 local waitingCountdown
 local waitingHint
+local waitingInventory
 local waitingLobbyButton
 local waitingSettingsButton
 local waitingSlots = {}
 local waitingCards = {}
 local lobbyOverlay
 local lobbyStatus
+local lobbyMyItems
 local lobbyTableRows = {}
 local lobbyTables = {}
 local passwordOverlay
@@ -105,7 +106,6 @@ local openSettingsOverlay
 local shopOverlay
 local shopStatusLabel
 local shopSnapshot = nil
-local shopPending = false
 local shopItemRows = {}
 local closeShop
 local setShopVisible
@@ -660,7 +660,6 @@ local function buildWaiting()
             setShopVisible(true)
             shopStatusLabel.TextColor3 = SUBTLE
             shopStatusLabel.Text = "正在读取道具…"
-            shopPending = false
             Hud.shopRequested:Fire()
         end
     end)
@@ -826,6 +825,16 @@ local function buildWaiting()
         "点击角色卡选择，击败 Bot 赢得对局",
         UDim2.fromOffset(600, 20),
         UDim2.fromOffset(0, 462),
+        SUBTLE,
+        10,
+        false
+    )
+    waitingInventory = centeredLabel(
+        waitingOverlay,
+        "Inventory",
+        "",
+        UDim2.fromOffset(580, 18),
+        UDim2.fromOffset(10, 486),
         SUBTLE,
         10,
         false
@@ -1153,94 +1162,56 @@ local function renderShop()
 
     local snapshot = shopSnapshot
     local ready = type(snapshot) == "table" and snapshot.ok == true
-    local locked = not ready or snapshot.locked == true
+    local practice = ready and (snapshot.practice == true or snapshot.mode == "practice")
 
     for itemId, row in pairs(shopItemRows) do
         local item = findShopItem(itemId)
         if item then
-            local loadout = tonumber(item.loadout) or 0
             local cap = tonumber(item.cap) or Shop.ITEMS[itemId].cap
             row.name.Text = item.name or row.name.Text
             row.description.Text = item.description or row.description.Text
             row.stock.Text = string.format(
-                "拥有 %d（免费 %d · 购买 %d）",
+                "拥有 %d 个        免费 %d · 购买 %d",
                 item.stock or 0,
                 item.free or 0,
                 item.purchased or 0
             )
-            row.equip.Text = string.format(
-                "装备 %d / %d · 本局带 %d",
-                loadout,
-                cap,
-                item.carry or 0
-            )
-
-            local canEdit = ready and not locked and not shopPending
-            local canRemove = canEdit and loadout > 0
-            local canAdd = canEdit and loadout < cap
-            row.minus.Active = canRemove
-            row.minus.TextColor3 = if canRemove then TEXT else SUBTLE
-            row.minus.BackgroundTransparency = if canRemove then 0.05 else 0.55
-            row.plus.Active = canAdd
-            row.plus.TextColor3 = if canAdd then TEXT else SUBTLE
-            row.plus.BackgroundTransparency = if canAdd then 0.05 else 0.55
-            row.count.Text = tostring(loadout)
+            if practice then
+                row.carry.Text = "练习模式：不携带道具，也不消耗库存"
+            elseif snapshot.mode == nil then
+                row.carry.Text = string.format(
+                    "下一局对战自动携带 %d / %d（库存不足时按库存取较小值）",
+                    item.carry or 0,
+                    cap
+                )
+            else
+                row.carry.Text = string.format("本局自动携带 %d / %d", item.carry or 0, cap)
+            end
 
             local purchasable = ready and item.purchasable == true
-            row.buy.Text = if purchasable then "购买" else "未上架"
+            row.buy.Text = if purchasable then "购买 1 个" else "未上架"
             row.buy.Active = purchasable
             row.buy.TextColor3 = if purchasable then TEXT else SUBTLE
             row.buy.BackgroundTransparency = if purchasable then 0.05 else 0.55
         else
             row.name.Text = Shop.ITEMS[itemId].name
-            row.stock.Text = ""
-            row.equip.Text = "装备 -"
-            row.minus.Active = false
-            row.plus.Active = false
+            row.stock.Text = "拥有 0 个        免费 0 · 购买 0"
+            row.carry.Text = "正在读取库存…"
             row.buy.Active = false
             row.buy.Text = "未上架"
         end
     end
 
-    if shopPending then
-        shopStatusLabel.TextColor3 = SUBTLE
-        shopStatusLabel.Text = "正在保存道具选择…"
-    elseif not ready then
+    if not ready then
         shopStatusLabel.TextColor3 = DANGER
         shopStatusLabel.Text = "读取失败，请关闭后重试"
-    elseif locked then
-        shopStatusLabel.TextColor3 = GOLD
-        shopStatusLabel.Text = "倒计时最后 3 秒，装备已锁定（仍可购买）"
-    elseif snapshot.practiceFree then
+    elseif practice then
         shopStatusLabel.TextColor3 = SURVIVE
-        shopStatusLabel.Text = "练习模式：本局使用的道具不会消耗库存"
-    elseif snapshot.mode == "practice" and snapshot.consumeInPractice then
-        shopStatusLabel.TextColor3 = GOLD
-        shopStatusLabel.Text = "测试开关已开启：练习模式会真实消耗道具库存"
-    elseif snapshot.mode == nil then
-        shopStatusLabel.TextColor3 = SUBTLE
-        shopStatusLabel.Text = "已离开房间 · 装备会在下一局生效（上限：针 2 · 遥控 1 · 踢泡 1）"
+        shopStatusLabel.Text = "练习模式不携带、不消耗道具；这里的购买只影响对战模式"
     else
         shopStatusLabel.TextColor3 = SUBTLE
-        shopStatusLabel.Text = "装备上限：针 2 · 遥控 1 · 踢泡 1；本局实际携带受库存限制"
+        shopStatusLabel.Text = "每点击一次购买 1 个 · 可重复购买 · 对战自动携带，无需手动配置"
     end
-end
-
-local function adjustShop(itemId, delta)
-    local item = findShopItem(itemId)
-    if not item or not shopSnapshot or shopSnapshot.locked == true or shopPending then
-        return
-    end
-    local loadout = {}
-    for _, otherId in ipairs(Shop.ITEM_ORDER) do
-        local other = findShopItem(otherId)
-        loadout[otherId] = if other then other.loadout or 0 else 0
-    end
-    local cap = tonumber(item.cap) or Shop.ITEMS[itemId].cap
-    loadout[itemId] = math.clamp((tonumber(item.loadout) or 0) + delta, 0, cap)
-    shopPending = true
-    renderShop()
-    Hud.loadoutChangeRequested:Fire({ loadout = loadout })
 end
 
 -- One place changes the panel's visibility, including when setState or lobby
@@ -1254,7 +1225,6 @@ end
 
 closeShop = function()
     setShopVisible(false)
-    shopPending = false
 end
 
 local function buildShop()
@@ -1276,7 +1246,7 @@ local function buildShop()
     centeredLabel(
         shopOverlay,
         "Subtitle",
-        "购买使用 Roblox 购买窗口 · 从房间打开商店会先离开当前房间",
+        "单个购买 · Roblox 原生购买窗口 · 从房间打开商店会先离开当前房间",
         UDim2.fromOffset(600, 18),
         UDim2.fromOffset(0, 42),
         SUBTLE,
@@ -1305,52 +1275,32 @@ local function buildShop()
         local badge = newFrame(
             row,
             "Badge",
-            UDim2.fromOffset(44, 44),
-            UDim2.fromOffset(12, 12),
+            UDim2.fromOffset(52, 52),
+            UDim2.fromOffset(12, 28),
             PANEL_3,
             0
         )
         round(badge, 0.5)
-        centeredLabel(badge, "Mark", info.short, UDim2.fromOffset(44, 44), UDim2.fromOffset(0, 0), ACCENT, 17)
+        centeredLabel(badge, "Mark", info.short, UDim2.fromOffset(52, 52), UDim2.fromOffset(0, 0), ACCENT, 20)
 
-        local name = label(row, "Name", info.name, UDim2.fromOffset(250, 22), UDim2.fromOffset(66, 8), TEXT, 15)
+        local name = label(row, "Name", info.name, UDim2.fromOffset(260, 24), UDim2.fromOffset(76, 7), TEXT, 16)
         local description = label(
             row,
             "Description",
             info.description,
-            UDim2.fromOffset(300, 30),
-            UDim2.fromOffset(66, 30),
+            UDim2.fromOffset(330, 30),
+            UDim2.fromOffset(76, 32),
             SUBTLE,
-            9,
+            10,
             false
         )
         description.TextWrapped = true
         description.TextYAlignment = Enum.TextYAlignment.Top
-        local stock = label(row, "Stock", "", UDim2.fromOffset(300, 18), UDim2.fromOffset(66, 66), SUBTLE, 9, false)
-        local equip = label(row, "Equip", "", UDim2.fromOffset(180, 20), UDim2.fromOffset(370, 10), TEXT, 10)
-        equip.TextXAlignment = Enum.TextXAlignment.Right
+        local stock = label(row, "Stock", "", UDim2.fromOffset(330, 20), UDim2.fromOffset(76, 64), TEXT, 14)
+        local carry = label(row, "Carry", "", UDim2.fromOffset(330, 18), UDim2.fromOffset(76, 86), SUBTLE, 10, false)
 
-        local minus = actionButton(row, "Minus", "-", UDim2.fromOffset(30, 28), UDim2.fromOffset(368, 40), PANEL_3)
-        minus.TextSize = 16
-        local count = centeredLabel(
-            row,
-            "Count",
-            "0",
-            UDim2.fromOffset(30, 28),
-            UDim2.fromOffset(402, 40),
-            TEXT,
-            14
-        )
-        local plus = actionButton(row, "Plus", "+", UDim2.fromOffset(30, 28), UDim2.fromOffset(436, 40), PANEL_3)
-        plus.TextSize = 16
-        minus.Activated:Connect(function()
-            adjustShop(itemId, -1)
-        end)
-        plus.Activated:Connect(function()
-            adjustShop(itemId, 1)
-        end)
-
-        local buy = actionButton(row, "Buy", "未上架", UDim2.fromOffset(78, 28), UDim2.fromOffset(470, 40), Color3.fromRGB(37, 92, 119))
+        local buy = actionButton(row, "Buy", "未上架", UDim2.fromOffset(116, 36), UDim2.fromOffset(428, 58), Color3.fromRGB(37, 92, 119))
+        buy.TextSize = 13
         buy.Activated:Connect(function()
             local item = findShopItem(itemId)
             if item and item.purchasable == true and type(item.productId) == "number" then
@@ -1365,10 +1315,7 @@ local function buildShop()
             name = name,
             description = description,
             stock = stock,
-            equip = equip,
-            minus = minus,
-            count = count,
-            plus = plus,
+            carry = carry,
             buy = buy,
         }
     end
@@ -1377,10 +1324,10 @@ local function buildShop()
         shopOverlay,
         "Status",
         "",
-        UDim2.fromOffset(560, 30),
+        UDim2.fromOffset(560, 48),
         UDim2.fromOffset(20, 430),
         SUBTLE,
-        10,
+        11,
         false
     )
     shopStatusLabel.TextWrapped = true
@@ -1459,7 +1406,6 @@ local function buildLobby()
             setShopVisible(true)
             shopStatusLabel.TextColor3 = SUBTLE
             shopStatusLabel.Text = "正在读取道具…"
-            shopPending = false
             Hud.shopRequested:Fire()
         end
     end)
@@ -1468,22 +1414,22 @@ local function buildLobby()
         lobbyOverlay,
         "Practice",
         "",
-        UDim2.fromOffset(560, 52),
-        UDim2.fromOffset(20, 76),
+        UDim2.fromOffset(560, 46),
+        UDim2.fromOffset(20, 74),
         Color3.fromRGB(25, 53, 72)
     )
-    label(practiceButton, "Name", "练习模式", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 5), TEXT, 16)
+    label(practiceButton, "Name", "练习模式", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 4), TEXT, 16)
     label(
         practiceButton,
         "Detail",
         "1v1 · 对战 Bot · 立即开始",
         UDim2.fromOffset(360, 18),
-        UDim2.fromOffset(14, 28),
+        UDim2.fromOffset(14, 27),
         SUBTLE,
         10,
         false
     )
-    label(practiceButton, "Go", "进入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 14), ACCENT, 12)
+    label(practiceButton, "Go", "进入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 11), ACCENT, 12)
     practiceButton.Activated:Connect(function()
         Hud.tableSelected:Fire("practice")
     end)
@@ -1492,49 +1438,49 @@ local function buildLobby()
         lobbyOverlay,
         "QuickVersus",
         "",
-        UDim2.fromOffset(560, 52),
-        UDim2.fromOffset(20, 134),
+        UDim2.fromOffset(560, 46),
+        UDim2.fromOffset(20, 126),
         Color3.fromRGB(39, 57, 79)
     )
-    label(quickButton, "Name", "快速对战", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 5), GOLD, 16)
+    label(quickButton, "Name", "快速对战", UDim2.fromOffset(300, 24), UDim2.fromOffset(14, 4), GOLD, 16)
     label(
         quickButton,
         "Detail",
         "优先补位无密码的等待桌，否则观战或新开一桌",
         UDim2.fromOffset(420, 18),
-        UDim2.fromOffset(14, 28),
+        UDim2.fromOffset(14, 27),
         SUBTLE,
         10,
         false
     )
-    label(quickButton, "Go", "加入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 14), ACCENT, 12)
+    label(quickButton, "Go", "加入", UDim2.fromOffset(60, 24), UDim2.fromOffset(480, 11), ACCENT, 12)
     quickButton.Activated:Connect(function()
         Hud.tableSelected:Fire("versus")
     end)
 
-    label(lobbyOverlay, "TablesTitle", "对战桌子", UDim2.fromOffset(300, 18), UDim2.fromOffset(22, 196), SUBTLE, 10)
+    label(lobbyOverlay, "TablesTitle", "对战桌子", UDim2.fromOffset(300, 18), UDim2.fromOffset(22, 180), SUBTLE, 10)
 
     for i = 1, Constants.VERSUS_TABLES do
         local row = actionButton(
             lobbyOverlay,
             "TableRow" .. i,
             "",
-            UDim2.fromOffset(560, 48),
-            UDim2.fromOffset(20, 218 + (i - 1) * 54),
+            UDim2.fromOffset(560, 44),
+            UDim2.fromOffset(20, 200 + (i - 1) * 48),
             PANEL_2
         )
-        local name = label(row, "Name", "", UDim2.fromOffset(190, 22), UDim2.fromOffset(14, 5), TEXT, 13)
+        local name = label(row, "Name", "", UDim2.fromOffset(190, 22), UDim2.fromOffset(14, 3), TEXT, 13)
         local detail = label(
             row,
             "Detail",
             "",
             UDim2.fromOffset(390, 16),
-            UDim2.fromOffset(14, 26),
+            UDim2.fromOffset(14, 24),
             SUBTLE,
             9,
             false
         )
-        local join = label(row, "Join", "", UDim2.fromOffset(120, 22), UDim2.fromOffset(420, 13), ACCENT, 11)
+        local join = label(row, "Join", "", UDim2.fromOffset(120, 22), UDim2.fromOffset(420, 11), ACCENT, 11)
         join.TextXAlignment = Enum.TextXAlignment.Right
         local entry = { row = row, name = name, detail = detail, join = join, data = nil }
         lobbyTableRows[i] = entry
@@ -1556,12 +1502,26 @@ local function buildLobby()
         end)
     end
 
+    label(lobbyOverlay, "MyItemsTitle", "我的道具", UDim2.fromOffset(300, 18), UDim2.fromOffset(22, 392), TEXT, 11, true)
+    lobbyMyItems = label(
+        lobbyOverlay,
+        "MyItems",
+        "正在读取道具…",
+        UDim2.fromOffset(556, 60),
+        UDim2.fromOffset(22, 412),
+        SUBTLE,
+        11,
+        false
+    )
+    lobbyMyItems.TextWrapped = true
+    lobbyMyItems.TextYAlignment = Enum.TextYAlignment.Top
+
     lobbyStatus = centeredLabel(
         lobbyOverlay,
         "Status",
         "",
         UDim2.fromOffset(560, 20),
-        UDim2.fromOffset(20, 466),
+        UDim2.fromOffset(20, 482),
         SUBTLE,
         10,
         false
@@ -1767,6 +1727,18 @@ local function updateWaiting()
         waitingHint.Text = if practice
             then "第一名玩家加入后开始倒计时"
             else "满 2 人后开始 10 秒倒计时"
+    end
+
+    if waitingInventory then
+        if type(state.inventory) == "table" then
+            local prefix = if practice
+                then "我的道具（练习不携带）："
+                else "我的道具（对战自动携带）："
+            waitingInventory.Text = prefix .. Shop.describeOwned(state.inventory)
+            waitingInventory.TextColor3 = if practice then SUBTLE else TEXT
+        else
+            waitingInventory.Text = ""
+        end
     end
 end
 
@@ -2626,19 +2598,35 @@ function Hud.showNotice(message)
     end)
 end
 
--- Shop snapshot from GetShop/SetLoadout. `open` defaults to true; a ShopUpdate
--- pushed after a purchase passes false so it refreshes an already-open panel
--- without popping it up over the game.
+-- Shop snapshot from GetShop. `open` defaults to true; a ShopUpdate pushed after
+-- a purchase passes false so it refreshes an already-open panel without popping
+-- it up over the game. Purchases are read-only here: the server owns stock and
+-- each versus round computes its own automatic carry.
 function Hud.setShop(snapshot, open: boolean?)
     if type(snapshot) ~= "table" then
         return
     end
     shopSnapshot = snapshot
-    shopPending = false
     if open ~= false then
         setShopVisible(true)
     end
     renderShop()
+end
+
+-- Read-only owned-inventory summary for the lobby. The same GetShop snapshot
+-- feeds the shop rows, so the two views can never disagree about stock.
+function Hud.setMyItems(snapshot)
+    if not lobbyMyItems then
+        return
+    end
+    if type(snapshot) ~= "table" or snapshot.ok ~= true or type(snapshot.items) ~= "table" then
+        lobbyMyItems.Text = "读取道具失败，请点刷新重试"
+        lobbyMyItems.TextColor3 = DANGER
+        return
+    end
+    local text = Shop.describeOwned(snapshot.items)
+    lobbyMyItems.Text = text
+    lobbyMyItems.TextColor3 = if text == "还没有道具" then SUBTLE else TEXT
 end
 
 function Hud.isShopOpen(): boolean
@@ -2655,26 +2643,6 @@ function Hud.setShopMessage(message: string?)
     end
     shopStatusLabel.TextColor3 = DANGER
     shopStatusLabel.Text = message or ""
-end
-
--- Result of SetLoadout. The server returns the authoritative snapshot (clamped
--- loadout and fresh stock), so the UI never keeps an optimistic value.
-function Hud.setLoadoutResult(ok: boolean, message: string?, shop)
-    shopPending = false
-    if type(shop) == "table" then
-        shopSnapshot = shop
-    end
-    renderShop()
-    if not shopStatusLabel then
-        return
-    end
-    if not ok then
-        shopStatusLabel.TextColor3 = DANGER
-        shopStatusLabel.Text = message or "保存失败，请重试"
-    elseif type(message) == "string" and message ~= "" then
-        shopStatusLabel.TextColor3 = SURVIVE
-        shopStatusLabel.Text = message
-    end
 end
 
 -- Result of a SetRoomConfig request. Success closes the modal; failure keeps it

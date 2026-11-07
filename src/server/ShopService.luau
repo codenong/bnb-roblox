@@ -45,8 +45,8 @@ function ShopService:_notify(player)
 end
 
 -- Live profile path. The profile object is the same table PlayerService and the
--- match room see, so a successful flush immediately updates the shop/loadout
--- carry without a reload.
+-- match room see, so a successful flush immediately updates stock and the next
+-- round's automatic carry without a reload.
 function ShopService:_grantLoaded(player, purchaseId, itemId, amount)
     local profile = self.profiles:getProfile(player)
     if not profile then

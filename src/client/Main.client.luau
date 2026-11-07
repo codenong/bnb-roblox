@@ -50,7 +50,6 @@ local joinTableRemote = Net.get("JoinTable")
 local leaveTableRemote = Net.get("LeaveTable")
 local setRoomConfigRemote = Net.get("SetRoomConfig")
 local getShopRemote = Net.get("GetShop")
-local setLoadoutRemote = Net.get("SetLoadout")
 local shopUpdateRemote = Net.get("ShopUpdate")
 local noticeRemote = Net.get("Notice")
 
@@ -276,10 +275,6 @@ local CONFIG_ERRORS = {
 
 local SHOP_ERRORS = {
     not_loaded = "数据仍在加载，请稍后再试",
-    not_waiting = "对局开始后无法调整装备",
-    locked = "倒计时最后 3 秒，装备已锁定",
-    invalid_request = "道具选择无效，请重试",
-    server_error = "保存失败，请重试",
 }
 
 local function loadLobbyTables()
@@ -294,6 +289,19 @@ local function loadLobbyTables()
     end
 end
 
+-- "我的道具" uses the same GetShop snapshot as the shop panel. It is read-only:
+-- every versus round computes its own automatic carry on the server.
+local function loadMyItems()
+    local ok, snapshot = pcall(function()
+        return getShopRemote:InvokeServer()
+    end)
+    if ok and type(snapshot) == "table" and snapshot.ok == true then
+        Hud.setMyItems(snapshot)
+    else
+        Hud.setMyItems(nil)
+    end
+end
+
 -- "换桌" and opening the shop both leave the current room. This is a real
 -- server-side seat exit (the old countdown is cancelled or the round is
 -- forfeited as usual), not a paused timer. The player has no room until they
@@ -301,7 +309,7 @@ end
 -- fresh practice room. Mark the client as browsing before the request so an
 -- in-flight RoundState from the old room cannot take over the UI while the
 -- server is removing the seat.
-local function leaveToLobby()
+local function leaveToLobby(fetchInventory: boolean?)
     local wasBrowsing = browsing
     browsing = true
     local ok, result = pcall(function()
@@ -313,17 +321,22 @@ local function leaveToLobby()
     end
     Hud.setLobbyOpen(true)
     loadLobbyTables()
+    -- The shop flow asks for a fresh snapshot itself, so it skips this call.
+    if fetchInventory ~= false then
+        loadMyItems()
+    end
     return true
 end
 
 Hud.lobbyRequested.Event:Connect(function()
     if browsing then
         -- The refresh button also uses this signal; the player is already out
-        -- of a room, so only the table list needs reloading.
+        -- of a room, so only the table list and inventory need reloading.
         loadLobbyTables()
+        loadMyItems()
         return
     end
-    leaveToLobby()
+    leaveToLobby(true)
 end)
 
 Hud.tableSelected.Event:Connect(function(target)
@@ -367,7 +380,7 @@ end)
 -- player there to choose practice or another table.
 Hud.shopRequested.Event:Connect(function()
     if not browsing then
-        local left, reason = leaveToLobby()
+        local left, reason = leaveToLobby(false)
         if not left then
             Hud.closeShop()
             Hud.showNotice(JOIN_ERRORS[reason] or "暂时无法离开房间，请稍后再试")
@@ -386,28 +399,10 @@ Hud.shopRequested.Event:Connect(function()
         Hud.setShopMessage(SHOP_ERRORS[snapshot.reason] or "读取道具失败，请稍后再试")
         return
     end
+    Hud.setMyItems(snapshot)
     -- The player may have closed the panel while the leave/snapshot requests
     -- were in flight; do not pop it open again in that case.
     Hud.setShop(snapshot, Hud.isShopOpen())
-end)
-
-Hud.loadoutChangeRequested.Event:Connect(function(request)
-    if type(request) ~= "table" then
-        Hud.setLoadoutResult(false, SHOP_ERRORS.invalid_request)
-        return
-    end
-    local ok, result = pcall(function()
-        return setLoadoutRemote:InvokeServer(request)
-    end)
-    if not ok or type(result) ~= "table" then
-        Hud.setLoadoutResult(false, SHOP_ERRORS.server_error)
-        return
-    end
-    if result.ok then
-        Hud.setLoadoutResult(true, "装备已保存", result.shop)
-    else
-        Hud.setLoadoutResult(false, SHOP_ERRORS[result.reason] or "保存失败，请重试", result.shop)
-    end
 end)
 
 Hud.purchaseRequested.Event:Connect(function(productId)
@@ -425,6 +420,7 @@ end)
 
 shopUpdateRemote.OnClientEvent:Connect(function(snapshot)
     Hud.setShop(snapshot, false)
+    Hud.setMyItems(snapshot)
 end)
 
 requestSync()

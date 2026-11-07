@@ -80,9 +80,9 @@ Stubs.Hud = {
         Env.shopMessages = Env.shopMessages or {}
         table.insert(Env.shopMessages, message)
     end,
-    setLoadoutResult = function(ok, message, shop)
-        Env.loadoutResults = Env.loadoutResults or {}
-        table.insert(Env.loadoutResults, { ok = ok == true, message = message, shop = shop })
+    setMyItems = function(snapshot)
+        Env.myItems = snapshot
+        Env.myItemsCalls = (Env.myItemsCalls or 0) + 1
     end,
     charSelected = signal("charSelected"),
     mutePressed = signal("mutePressed"),
@@ -91,7 +91,6 @@ Stubs.Hud = {
     tableSelected = signal("tableSelected"),
     roomConfigSubmitted = signal("roomConfigSubmitted"),
     shopRequested = signal("shopRequested"),
-    loadoutChangeRequested = signal("loadoutChangeRequested"),
     purchaseRequested = signal("purchaseRequested"),
 }
 

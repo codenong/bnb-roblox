@@ -293,12 +293,9 @@ do
     local leaveRemote = Env.remotes.LeaveTable
     local snapshot = {
         ok = true,
-        locked = false,
-        mode = "practice",
-        phase = "waiting",
-        items = { { id = "needle", stock = 1, loadout = 1, carry = 1 } },
-        consumeInPractice = false,
-        practiceFree = true,
+        mode = nil,
+        phase = nil,
+        items = { { id = "needle", stock = 1, free = 0, purchased = 1, carry = 1 } },
     }
     local order = {}
     local getTablesCalls = 0
@@ -321,6 +318,8 @@ do
     Env.shopMessages = nil
     Env.shopClosed = nil
     Env.shopOpen = true
+    Env.myItems = nil
+    Env.myItemsCalls = 0
 
     local leaveBefore = leaveRemote.invokes
     Env.signals.shopRequested()
@@ -333,6 +332,8 @@ do
     check("a shop snapshot opens the panel", Env.shopSnapshots
         and #Env.shopSnapshots == 1 and Env.shopSnapshots[1].snapshot == snapshot
         and Env.shopSnapshots[1].open == true)
+    check("a successful snapshot refreshes the owned-items summary",
+        Env.myItemsCalls == 1 and Env.myItems == snapshot, Env.myItemsCalls)
     check("a successful snapshot clears no message", Env.shopMessages == nil)
 
     -- The shop already left the old room. A RoundState that was in flight before
@@ -418,8 +419,7 @@ do
 
     local shopUpdate = {
         ok = true,
-        locked = false,
-        items = { { id = "needle", stock = 2, loadout = 2, carry = 2 } },
+        items = { { id = "needle", stock = 2, free = 0, purchased = 2, carry = 2 } },
     }
     local updatesBefore = #Env.shopSnapshots
     fire("ShopUpdate", shopUpdate)
@@ -427,53 +427,39 @@ do
         #Env.shopSnapshots == updatesBefore + 1
             and Env.shopSnapshots[#Env.shopSnapshots].snapshot == shopUpdate
             and Env.shopSnapshots[#Env.shopSnapshots].open == false)
+    check("a shop update refreshes the owned-items summary",
+        Env.myItems == shopUpdate)
 end
 
----------------------------------------------------------------- 装备保存
+---------------------------------------------------------------- 大厅“我的道具”
 do
-    local setLoadoutRemote = Env.remotes.SetLoadout
-    local shop = { ok = true, items = {} }
-    Env.invokeResponses.SetLoadout = function()
-        return { ok = true, shop = shop }
+    local myItems = {
+        ok = true,
+        items = { { id = "needle", stock = 3, free = 1, purchased = 2, carry = 2 } },
+    }
+    Env.myItems = nil
+    Env.myItemsCalls = 0
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = true }
     end
-    Env.loadoutResults = nil
-    Env.signals.loadoutChangeRequested({ loadout = { needle = 2, remote = 1, kick = 0 } })
-    check("the loadout request reaches the server",
-        setLoadoutRemote.lastArgs[1].loadout.needle == 2
-            and setLoadoutRemote.lastArgs[1].loadout.remote == 1)
-    check("a saved loadout is confirmed",
-        #Env.loadoutResults == 1
-            and Env.loadoutResults[1].ok == true
-            and Env.loadoutResults[1].message == "装备已保存"
-            and Env.loadoutResults[1].shop == shop)
-
-    Env.invokeResponses.SetLoadout = function()
-        return { ok = false, reason = "locked", shop = shop }
+    Env.invokeResponses.GetShop = function()
+        return myItems
     end
-    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
-    check("a locked edit is explained", Env.loadoutResults[2].ok == false
-        and Env.loadoutResults[2].message == "倒计时最后 3 秒，装备已锁定")
-    check("a failed edit still gets the fresh snapshot", Env.loadoutResults[2].shop == shop)
+    Env.signals.lobbyRequested()
+    check("refreshing the lobby loads the owned items",
+        Env.myItemsCalls == 1 and Env.myItems == myItems, Env.myItemsCalls)
 
-    Env.invokeResponses.SetLoadout = function()
-        return { ok = false, reason = "not_waiting" }
-    end
-    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
-    check("an in-play edit is explained", Env.loadoutResults[3].message == "对局开始后无法调整装备")
+    Env.invokeResponses.GetShop = { ok = false, reason = "not_loaded" }
+    Env.signals.lobbyRequested()
+    check("a failed inventory read clears the lobby list",
+        Env.myItemsCalls == 2 and Env.myItems == nil, Env.myItemsCalls)
 
-    Env.invokeResponses.SetLoadout = function()
+    Env.invokeResponses.GetShop = function()
         error("remote failed")
     end
-    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
-    check("a throwing loadout remote is reported", Env.loadoutResults[4].ok == false
-        and Env.loadoutResults[4].message == "保存失败，请重试")
-
-    local invokesBefore = setLoadoutRemote.invokes
-    Env.signals.loadoutChangeRequested("not a table")
-    check("a non-table loadout request is rejected locally",
-        setLoadoutRemote.invokes == invokesBefore)
-    check("a non-table loadout request is explained",
-        Env.loadoutResults[5].message == "道具选择无效，请重试")
+    Env.signals.lobbyRequested()
+    check("a throwing inventory read clears the lobby list",
+        Env.myItemsCalls == 3 and Env.myItems == nil, Env.myItemsCalls)
 end
 
 ---------------------------------------------------------------- 购买提示

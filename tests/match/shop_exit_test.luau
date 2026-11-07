@@ -32,23 +32,28 @@ end
 MatchService.init({
     precreateVersus = false,
     onUsageSettled = function() end,
-    onLoadoutChanged = function() end,
 })
 
----------------------------------------------------------------- 练习房：离房后商店仍可编辑
+---------------------------------------------------------------- 练习房：离房后商店只读，按库存自动携带
 
-local shopper = newPlayer("Shopper")
+local shopper, shopperRecord = newPlayer("Shopper")
+shopperRecord.profile.inventory.needle.free = 2
 local practice = MatchService.getRoomFor(shopper)
 check("the shopper starts in a practice room", practice ~= nil and practice.mode == "practice")
+local practiceShop = MatchService.getShop(shopper)
+check("practice shows the stock but carries none",
+    practiceShop.items[1].stock == 2 and practiceShop.items[1].carry == 0,
+    practiceShop.items[1].carry)
 check("leaving the practice room succeeds", MatchService.leaveTable(shopper) == true)
 check("the empty practice room is removed", MatchService.getRoomFor(shopper) == nil)
 check("a roomless player has no sync state while browsing", MatchService.getSync(shopper) == nil)
 local shop = MatchService.getShop(shopper)
 check("the exited player can still open the shop", shop.ok == true, shop.reason)
-check("the roomless shop is editable", shop.locked == false)
+check("the roomless shop has no lock state", shop.locked == nil)
 check("the roomless shop has no room phase", shop.phase == nil and shop.mode == nil)
-check("the roomless shop can save a loadout",
-    MatchService.setLoadout(shopper, { loadout = { needle = 1 } }).ok == true)
+check("there is no loadout editor to save", MatchService.setLoadout == nil)
+check("the roomless shop previews the versus carry",
+    shop.items[1].carry == 2, shop.items[1].carry)
 
 ---------------------------------------------------------------- 对战桌：离房取消这张桌的倒计时
 
@@ -69,7 +74,7 @@ check("the shopper leaves the versus table", MatchService.leaveTable(p1) == true
 check("the leaver no longer has a room", MatchService.getRoomFor(p1) == nil)
 local roomlessShop = MatchService.getShop(p1)
 check("the leaver's shop is roomless",
-    roomlessShop.ok == true and roomlessShop.mode == nil and roomlessShop.locked == false,
+    roomlessShop.ok == true and roomlessShop.mode == nil and roomlessShop.locked == nil,
     roomlessShop.reason)
 check("the remaining seat still exists", MatchService.getRoomFor(p2) == versus)
 check("one seat alone is not a countdown",

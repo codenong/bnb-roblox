@@ -36,12 +36,26 @@ local REMOTE_PRODUCT = 91002
 
 ---------------------------------------------------------------- 上架映射
 
-check("placeholder products are not for sale", ShopConfig.getProduct("needle") == nil)
-check("placeholder ids resolve to no item", ShopConfig.findByProductId(0) == nil)
+-- Temporarily clear the deployment ids to pin the "0 = not listed" behavior,
+-- then restore them and check that every configured product maps back.
+local configuredIds = {}
+for _, itemId in ipairs({ "needle", "remote", "kick" }) do
+    configuredIds[itemId] = ShopConfig.PRODUCTS[itemId].productId
+    ShopConfig.PRODUCTS[itemId].productId = 0
+end
+check("zero product ids mean not listed", ShopConfig.getProduct("needle") == nil)
+check("zero ids resolve to no item", ShopConfig.findByProductId(0) == nil)
+
+for _, itemId in ipairs({ "needle", "remote", "kick" }) do
+    ShopConfig.PRODUCTS[itemId].productId = configuredIds[itemId]
+    local product = ShopConfig.getProduct(itemId)
+    check("the configured " .. itemId .. " product is for sale", product ~= nil)
+    check("the configured " .. itemId .. " id maps back",
+        product ~= nil and ShopConfig.findByProductId(product.productId) == itemId)
+end
 check("an unknown product id resolves to no item", ShopConfig.findByProductId(999999) == nil)
 
--- Enable two test products. The real deployment replaces the zero placeholders;
--- this test exercises the receipt transaction itself.
+-- Use isolated ids for the receipt transaction itself.
 ShopConfig.PRODUCTS.needle.productId = NEEDLE_PRODUCT
 ShopConfig.PRODUCTS.remote.productId = REMOTE_PRODUCT
 check("an enabled product is for sale", ShopConfig.getProduct("needle").productId == NEEDLE_PRODUCT)

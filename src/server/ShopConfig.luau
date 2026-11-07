@@ -3,26 +3,28 @@
 -- server decides what a ProductId grants.
 --
 -- ProductId 0 means "not listed yet": the shop still shows the item and its
--- stock, but the purchase button stays disabled. Replace each 0 with the
--- Developer Product id from the Creator Dashboard when it exists. The Robux
--- price is configured there, never in code; the native purchase prompt handles
--- the player's balance and insufficient-funds cases.
+-- stock, but the purchase button stays disabled. The ids below are the fixed
+-- Developer Product identifiers for this experience; changing a product's name
+-- or Robux price in the Creator Dashboard keeps the same id, while deleting and
+-- recreating the product produces a new one. The Robux price is configured
+-- there, never in code; the native purchase prompt handles the player's balance
+-- and insufficient-funds cases.
+--
+-- Roblox Developer Products have a fixed price and a fixed grant per product.
+-- There is no quantity selector, cart or custom total, so the shop sells one
+-- item per native purchase prompt.
 
 local ITEM_IDS = { "needle", "remote", "kick" }
 local ITEM_SET = { needle = true, remote = true, kick = true }
 
 local ShopConfig = {}
 
--- Practice is free by default: using brought items never changes saved stock.
--- Set this to true to exercise real inventory consumption in practice when
--- testing the payment/accounting path.
-ShopConfig.CONSUME_IN_PRACTICE = false
-
--- One product per item. `amount` is how much stock one purchase grants.
+-- One product per item, one unit per purchase. `amount` remains in the schema
+-- for future fixed bundles, but no pack/cart UI is exposed.
 ShopConfig.PRODUCTS = {
-    needle = { productId = 0, amount = 1 },
-    remote = { productId = 0, amount = 1 },
-    kick = { productId = 0, amount = 1 },
+    needle = { productId = 3729274253, amount = 1 }, -- Escape Needle
+    remote = { productId = 3729278162, amount = 1 }, -- Remote Control
+    kick = { productId = 3729285352, amount = 1 }, -- Bubble Kick Shoes
 }
 
 -- Returns nil for unknown or disabled products so both the shop UI and

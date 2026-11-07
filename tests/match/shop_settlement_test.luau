@@ -13,14 +13,11 @@ local Shop = require("./Shop")
 
 local nextUserId = 20000
 
-local function newPatient(stock, loadout)
+local function newPatient(stock)
     local profile = ProfileSchema.normalize(ProfileSchema.newProfile())
     for itemId, buckets in pairs(stock or {}) do
         profile.inventory[itemId].free = buckets.free or 0
         profile.inventory[itemId].purchased = buckets.purchased or 0
-    end
-    for itemId, value in pairs(loadout or {}) do
-        profile.loadout[itemId] = value
     end
     nextUserId += 1
     return PlayerService.add({
@@ -46,7 +43,7 @@ local function newRoom(opts)
                 carried = carried,
                 context = context,
             })
-            if Shop.shouldConsume(context.mode, opts.consumeInPractice == true) then
+            if context.mode ~= "practice" then
                 Shop.settleUsage(record.profile, carried, used)
             end
         end,
@@ -74,17 +71,17 @@ do
         needle = { free = 1 },
         remote = { purchased = 1 },
         kick = { purchased = 1 },
-    }, { needle = 1, remote = 1, kick = 1 })
+    })
     local room, events = newRoom({ id = 801 })
     local game = start(room, record)
     check("the round has started", room:getPhase() == "playing", room:getPhase())
-    check("the round starts with the effective carry",
-        game.players[record.id].inv.needle == 1 and game.players[record.id].inv.remote == 1
-            and game.players[record.id].kick == true)
+    check("practice starts with no brought items",
+        game.players[record.id].inv.needle == 0
+            and game.players[record.id].inv.remote == 0
+            and game.players[record.id].kick == false)
 
-    -- The carry snapshot was taken at round start. Later profile edits must not
-    -- rewrite what the player brought into this round.
-    record.profile.loadout.needle = 0
+    -- Practice can still report pickups/usage, but the zero carry snapshot means
+    -- there is nothing to charge. Later profile edits must not rewrite the round.
     record.profile.inventory.needle.free = 0
     setUsed(room, record, { needle = 1, remote = 1, kick = 1 })
     room:finishRound()
@@ -96,9 +93,9 @@ do
     check("the settlement reason is round end", event.context.reason == "round_end")
     check("usage includes every successfully used item",
         event.used.needle == 1 and event.used.remote == 1 and event.used.kick == 1)
-    check("the carry snapshot is the round-start value, not the edited profile",
-        event.carried.needle == 1 and event.carried.remote == 1 and event.carried.kick == 1)
-    check("practice settlement leaves free stock untouched",
+    check("the practice carry snapshot is all zero",
+        event.carried.needle == 0 and event.carried.remote == 0 and event.carried.kick == 0)
+    check("practice settlement leaves paid stock untouched",
         record.profile.inventory.needle.free == 0 and record.profile.inventory.remote.purchased == 1
             and record.profile.inventory.kick.purchased == 1)
 
@@ -107,25 +104,28 @@ do
     check("settleActiveUsage after finish is a no-op", room:settleActiveUsage("duplicate") == 0)
 end
 
----------------------------------------------------------------- 开关打开时练习也真实扣库存
+---------------------------------------------------------------- 练习房状态带库存摘要，但实带为零
 
 do
     local record = newPatient({
         needle = { free = 1, purchased = 2 },
-        kick = { purchased = 1 },
-    }, { needle = 2, kick = 1 })
-    local room, events = newRoom({ id = 802, consumeInPractice = true })
-    start(room, record)
-    setUsed(room, record, { needle = 2, remote = 0, kick = 1 })
-    room:finishRound()
-
-    check("the enabled switch settles practice", #events == 1, #events)
-    check("needle spending takes free stock first",
-        record.profile.inventory.needle.free == 0, record.profile.inventory.needle.free)
-    check("needle spending then takes purchased stock",
-        record.profile.inventory.needle.purchased == 1, record.profile.inventory.needle.purchased)
-    check("a successful kick spends the purchased kick",
-        record.profile.inventory.kick.purchased == 0, record.profile.inventory.kick.purchased)
+        remote = { purchased = 1 },
+    })
+    local room = Room.new({
+        id = 802,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 1,
+        resultsTicks = 4,
+    })
+    room:addMember(record)
+    local state = room:getSync(record)
+    check("the waiting state includes the owned inventory",
+        type(state.inventory) == "table" and state.inventory[1].id == "needle"
+            and state.inventory[1].stock == 3 and state.inventory[2].stock == 1)
+    check("practice inventory rows show zero carry",
+        state.inventory[1].carry == 0 and state.inventory[2].carry == 0)
 end
 
 ---------------------------------------------------------------- 对战：地图拾取不超额扣库存
@@ -135,7 +135,7 @@ do
         needle = { free = 1, purchased = 2 },
         remote = { purchased = 1 },
         kick = { purchased = 1 },
-    }, { needle = 2, remote = 1, kick = 1 })
+    })
     local room, events = newRoom({ id = 803, mode = "versus" })
     start(room, record)
     -- Actual use exceeds the brought copy for needles and remotes: the extra
@@ -161,7 +161,7 @@ end
 ---------------------------------------------------------------- 中途离开只结算一次
 
 do
-    local record = newPatient({ needle = { purchased = 1 } }, { needle = 1 })
+    local record = newPatient({ needle = { purchased = 1 } })
     local room, events = newRoom({ id = 804, mode = "versus" })
     start(room, record)
     setUsed(room, record, { needle = 1 })
@@ -179,8 +179,8 @@ end
 ---------------------------------------------------------------- 重置/回收也会结算，且只结算一次
 
 do
-    local record = newPatient({ remote = { purchased = 1 } }, { remote = 1 })
-    local room, events = newRoom({ id = 805, consumeInPractice = true })
+    local record = newPatient({ remote = { purchased = 1 } })
+    local room, events = newRoom({ id = 805, mode = "versus" })
     start(room, record)
     setUsed(room, record, { remote = 1 })
     room:resetForWaiting()
@@ -196,10 +196,9 @@ end
 ---------------------------------------------------------------- 等待名单和观战者都看得到实带
 
 do
-    local alice = newPatient({ needle = { free = 2 }, kick = { purchased = 1 } },
-        { needle = 2, kick = 1 })
-    local bob = newPatient({ remote = { purchased = 1 } }, { remote = 1 })
-    local cara = newPatient({ needle = { purchased = 1 } }, { needle = 1 })
+    local alice = newPatient({ needle = { free = 2 }, kick = { purchased = 1 } })
+    local bob = newPatient({ remote = { purchased = 1 } })
+    local cara = newPatient({ needle = { purchased = 1 } })
 
     local room = Room.new({
         id = 806,
@@ -224,13 +223,13 @@ do
     check("a spectator sees Bob's effective carry",
         byId[bob.id].items.remote == 1, byId[bob.id].items.remote)
 
-    alice.profile.loadout.needle = 1
+    alice.profile.inventory.needle.free = 1
     Net.reset()
-    room:refreshLoadouts()
+    room:refreshInventory()
     local refreshed = room:getSync(cara)
     for _, entry in ipairs(refreshed.roster) do
         if entry.id == alice.id then
-            check("a loadout edit refreshes the spectator's view", entry.items.needle == 1,
+            check("a stock change refreshes the spectator's view", entry.items.needle == 1,
                 entry.items.needle)
         end
     end

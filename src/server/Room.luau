@@ -340,18 +340,18 @@ function Room:_refreshWaitingRoster()
             char = record.char,
             colorIndex = i - 1,
             -- Visible to everyone in the room, including spectators. This is the
-            -- effective carry (loadout capped by current stock), not the loadout
-            -- intent itself.
-            items = Shop.effectiveCarry(record.profile),
+            -- automatic carry for this room's mode: versus caps stock at the
+            -- entry limit, practice carries nothing.
+            items = Shop.effectiveCarry(record.profile, self.mode),
         }
     end
     self.roster = entries
     self.rosterById = indexRoster(entries)
 end
 
--- Called by MatchService after a loadout edit so everyone in the waiting room
--- sees the new carry immediately.
-function Room:refreshLoadouts(): boolean
+-- Called by MatchService after a purchase so everyone in the waiting room sees
+-- the new stock/carry immediately.
+function Room:refreshInventory(): boolean
     if self.phase ~= "waiting" then
         return false
     end
@@ -373,6 +373,7 @@ function Room:_buildState(record)
         spawns = Map.SPAWNS,
         tile = Constants.TILE,
         selectedChar = if record then record.char else Characters.DEFAULT_CHAR,
+        inventory = if record then Shop.inventorySummary(record.profile, self.mode) else nil,
         spectating = true,
         charLocked = self:isCharLocked(),
         roomId = self.id,
@@ -638,7 +639,7 @@ function Room:_startRound()
             name = record.name,
             isBot = false,
             char = record.char,
-            carry = Shop.effectiveCarry(record.profile),
+            carry = Shop.effectiveCarry(record.profile, self.mode),
         })
     end
 
