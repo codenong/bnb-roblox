@@ -288,4 +288,218 @@ do
         and Env.roomConfigResults[6].message == "设置内容无效")
 end
 
+---------------------------------------------------------------- 商店面板：进店即离开房间
+do
+    local leaveRemote = Env.remotes.LeaveTable
+    local snapshot = {
+        ok = true,
+        locked = false,
+        mode = "practice",
+        phase = "waiting",
+        items = { { id = "needle", stock = 1, loadout = 1, carry = 1 } },
+        consumeInPractice = false,
+        practiceFree = true,
+    }
+    local order = {}
+    local getTablesCalls = 0
+    local getShopCalls = 0
+
+    Env.invokeResponses.GetTables = function()
+        getTablesCalls += 1
+        return {}
+    end
+    Env.invokeResponses.LeaveTable = function()
+        table.insert(order, "leave")
+        return { ok = true }
+    end
+    Env.invokeResponses.GetShop = function()
+        getShopCalls += 1
+        table.insert(order, "shop")
+        return snapshot
+    end
+    Env.shopSnapshots = nil
+    Env.shopMessages = nil
+    Env.shopClosed = nil
+    Env.shopOpen = true
+
+    local leaveBefore = leaveRemote.invokes
+    Env.signals.shopRequested()
+    check("opening the shop from a room leaves it first",
+        leaveRemote.invokes == leaveBefore + 1, leaveRemote.invokes - leaveBefore)
+    check("the shop snapshot is requested after the room exit",
+        #order == 2 and order[1] == "leave" and order[2] == "shop", table.concat(order, ","))
+    check("the exited room shows the browser behind the shop", Env.lobbyOpen == true)
+    check("the browser loads tables behind the shop", getTablesCalls == 1, getTablesCalls)
+    check("a shop snapshot opens the panel", Env.shopSnapshots
+        and #Env.shopSnapshots == 1 and Env.shopSnapshots[1].snapshot == snapshot
+        and Env.shopSnapshots[1].open == true)
+    check("a successful snapshot clears no message", Env.shopMessages == nil)
+
+    -- The shop already left the old room. A RoundState that was in flight before
+    -- the seat was released must not pull the player back into that room.
+    local lobbyGrid = Env.lastGrid
+    fire("RoundState", {
+        phase = "playing",
+        roomId = 1,
+        roundId = 99,
+        roster = {},
+        yourId = "u1",
+        grid = { "stale-shop-round" },
+    })
+    check("a stale state cannot pull the shopper back into the old room",
+        Env.lobbyOpen == true and Env.lastGrid == lobbyGrid)
+
+    -- Already roomless (either the browser was open or the shop just left the
+    -- room): opening the shop must not issue another leave request.
+    local leaveAfterExit = leaveRemote.invokes
+    Env.signals.shopRequested()
+    check("a roomless shop does not leave again", leaveRemote.invokes == leaveAfterExit)
+    check("a roomless shop still refreshes from the server", getShopCalls == 2, getShopCalls)
+    check("opening a roomless shop keeps the browser behind it", Env.lobbyOpen == true)
+
+    -- Closing while the snapshot request is in flight must not reopen the panel.
+    Env.invokeResponses.GetShop = function()
+        getShopCalls += 1
+        Env.shopOpen = false
+        return snapshot
+    end
+    local snapshotsBeforeClose = #Env.shopSnapshots
+    Env.signals.shopRequested()
+    check("closing during the request does not reopen the shop",
+        #Env.shopSnapshots == snapshotsBeforeClose + 1
+            and Env.shopSnapshots[#Env.shopSnapshots].open == false)
+
+    Env.shopOpen = true
+    local snapshotsBeforeFailures = #Env.shopSnapshots
+    Env.invokeResponses.GetShop = { ok = false, reason = "not_loaded" }
+    Env.signals.shopRequested()
+    check("a not-loaded shop explains the wait", Env.shopMessages
+        and Env.shopMessages[#Env.shopMessages] == "数据仍在加载，请稍后再试")
+    check("a failed snapshot does not open the panel",
+        #Env.shopSnapshots == snapshotsBeforeFailures, #Env.shopSnapshots)
+
+    Env.invokeResponses.GetShop = function()
+        error("remote failed")
+    end
+    Env.signals.shopRequested()
+    check("a throwing shop remote is reported", Env.shopMessages
+        and Env.shopMessages[#Env.shopMessages] == "读取道具失败，请稍后再试")
+
+    Env.invokeResponses.GetShop = function()
+        return nil
+    end
+    Env.signals.shopRequested()
+    check("a non-table shop answer is reported", Env.shopMessages
+        and Env.shopMessages[#Env.shopMessages] == "读取道具失败，请稍后再试")
+    check("no failed request opened the panel",
+        #Env.shopSnapshots == snapshotsBeforeFailures, #Env.shopSnapshots)
+
+    -- A failed room exit must not leave the shop open over a live countdown.
+    Env.invokeResponses.JoinTable = function()
+        return { ok = true }
+    end
+    Env.signals.tableSelected("practice")
+    check("a successful join returns to the room UI", Env.lobbyOpen == false)
+    Env.shopOpen = true
+    Env.shopClosed = nil
+    local noticesBefore = #(Env.notices or {})
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = false, reason = "not_loaded" }
+    end
+    local shopCallsBeforeFailedLeave = getShopCalls
+    Env.signals.shopRequested()
+    check("a failed room exit closes the shop", Env.shopClosed == true and Env.shopOpen == false)
+    check("a failed room exit does not fetch a snapshot",
+        getShopCalls == shopCallsBeforeFailedLeave, getShopCalls - shopCallsBeforeFailedLeave)
+    check("a failed room exit explains why", Env.notices
+        and #Env.notices == noticesBefore + 1
+        and Env.notices[#Env.notices] == "数据仍在加载，请稍后再试", Env.notices and #Env.notices)
+    check("a failed room exit leaves the old room UI alone", Env.lobbyOpen == false)
+
+    local shopUpdate = {
+        ok = true,
+        locked = false,
+        items = { { id = "needle", stock = 2, loadout = 2, carry = 2 } },
+    }
+    local updatesBefore = #Env.shopSnapshots
+    fire("ShopUpdate", shopUpdate)
+    check("a shop update refreshes without reopening",
+        #Env.shopSnapshots == updatesBefore + 1
+            and Env.shopSnapshots[#Env.shopSnapshots].snapshot == shopUpdate
+            and Env.shopSnapshots[#Env.shopSnapshots].open == false)
+end
+
+---------------------------------------------------------------- 装备保存
+do
+    local setLoadoutRemote = Env.remotes.SetLoadout
+    local shop = { ok = true, items = {} }
+    Env.invokeResponses.SetLoadout = function()
+        return { ok = true, shop = shop }
+    end
+    Env.loadoutResults = nil
+    Env.signals.loadoutChangeRequested({ loadout = { needle = 2, remote = 1, kick = 0 } })
+    check("the loadout request reaches the server",
+        setLoadoutRemote.lastArgs[1].loadout.needle == 2
+            and setLoadoutRemote.lastArgs[1].loadout.remote == 1)
+    check("a saved loadout is confirmed",
+        #Env.loadoutResults == 1
+            and Env.loadoutResults[1].ok == true
+            and Env.loadoutResults[1].message == "装备已保存"
+            and Env.loadoutResults[1].shop == shop)
+
+    Env.invokeResponses.SetLoadout = function()
+        return { ok = false, reason = "locked", shop = shop }
+    end
+    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
+    check("a locked edit is explained", Env.loadoutResults[2].ok == false
+        and Env.loadoutResults[2].message == "倒计时最后 3 秒，装备已锁定")
+    check("a failed edit still gets the fresh snapshot", Env.loadoutResults[2].shop == shop)
+
+    Env.invokeResponses.SetLoadout = function()
+        return { ok = false, reason = "not_waiting" }
+    end
+    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
+    check("an in-play edit is explained", Env.loadoutResults[3].message == "对局开始后无法调整装备")
+
+    Env.invokeResponses.SetLoadout = function()
+        error("remote failed")
+    end
+    Env.signals.loadoutChangeRequested({ loadout = { needle = 1 } })
+    check("a throwing loadout remote is reported", Env.loadoutResults[4].ok == false
+        and Env.loadoutResults[4].message == "保存失败，请重试")
+
+    local invokesBefore = setLoadoutRemote.invokes
+    Env.signals.loadoutChangeRequested("not a table")
+    check("a non-table loadout request is rejected locally",
+        setLoadoutRemote.invokes == invokesBefore)
+    check("a non-table loadout request is explained",
+        Env.loadoutResults[5].message == "道具选择无效，请重试")
+end
+
+---------------------------------------------------------------- 购买提示
+do
+    Env.purchasePrompts = nil
+    Env.promptError = nil
+    Env.shopMessages = nil
+
+    Env.signals.purchaseRequested("123")
+    Env.signals.purchaseRequested(nil)
+    check("a non-numeric product never opens the prompt", Env.purchasePrompts == nil)
+
+    Env.signals.purchaseRequested(91001)
+    check("a purchase opens the native prompt", Env.purchasePrompts
+        and #Env.purchasePrompts == 1
+        and Env.purchasePrompts[1].productId == 91001)
+    check("the prompt targets the local player", Env.purchasePrompts
+        and Env.purchasePrompts[1].player ~= nil)
+    check("the purchase prompt is left to Roblox", Env.shopMessages == nil)
+
+    Env.promptError = "prompt failed"
+    Env.signals.purchaseRequested(91002)
+    check("a failing prompt is reported", Env.shopMessages
+        and Env.shopMessages[#Env.shopMessages] == "无法打开购买窗口，请稍后再试")
+    check("the failing prompt never reached Roblox",
+        Env.purchasePrompts and #Env.purchasePrompts == 1, Env.purchasePrompts and #Env.purchasePrompts)
+end
+
 TestLib.finish()

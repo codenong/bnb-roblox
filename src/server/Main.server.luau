@@ -3,6 +3,7 @@
 
 local DataStoreService = game:GetService("DataStoreService")
 local HttpService = game:GetService("HttpService")
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -15,6 +16,7 @@ local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 local Net = require(Shared:WaitForChild("Net"))
 local ProfileSchema = require(Shared:WaitForChild("ProfileSchema"))
+local Shop = require(Shared:WaitForChild("Shop"))
 
 Net.init()
 
@@ -22,6 +24,8 @@ local MatchService = require(script.Parent:WaitForChild("MatchService"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
 local ProfileService = require(script.Parent:WaitForChild("ProfileService"))
 local ProfileStore = require(script.Parent:WaitForChild("ProfileStore"))
+local ShopConfig = require(script.Parent:WaitForChild("ShopConfig"))
+local ShopService = require(script.Parent:WaitForChild("ShopService"))
 local VersusStats = require(script.Parent:WaitForChild("VersusStats"))
 
 ---------------------------------------------------------------- 数据层
@@ -94,6 +98,36 @@ local function onSettled(members, result, context)
     end
 end
 
+-- Item settlement is deliberately separate from stats settlement: BindToClose
+-- charges used items but must not record a versus result for an unfinished
+-- round. Practice is free unless ShopConfig opts into real consumption.
+local function onUsageSettled(record, used, carried, context)
+    if not record or type(record.profile) ~= "table" then
+        return
+    end
+    local mode = if context then context.mode else nil
+    if not Shop.shouldConsume(mode, ShopConfig.CONSUME_IN_PRACTICE) then
+        return
+    end
+
+    local spent = Shop.settleUsage(record.profile, carried, used)
+    local changed = false
+    for _, itemId in ipairs(Shop.ITEM_ORDER) do
+        local bucket = spent[itemId]
+        if bucket and (bucket.free > 0 or bucket.purchased > 0) then
+            changed = true
+            break
+        end
+    end
+    if changed then
+        profiles:commitMany({ record })
+    end
+end
+
+local function onLoadoutChanged(record)
+    profiles:commitMany({ record })
+end
+
 -- Room names are user text shown to every player browsing the table list, so they
 -- must go through Roblox filtering before they are stored. Filtering can yield;
 -- MatchService rechecks host/phase after this returns.
@@ -119,11 +153,31 @@ end
 
 MatchService.init({
     onSettled = onSettled,
+    onUsageSettled = onUsageSettled,
+    onLoadoutChanged = onLoadoutChanged,
     filterRoomName = filterRoomName,
     notify = notify,
 })
 
+local shopService = ShopService.new({
+    profiles = profiles,
+    store = profileStore,
+    flushSeconds = 10,
+    logger = warn,
+    onGranted = function(player)
+        if player and player.Parent == nil then
+            return
+        end
+        local snapshot = MatchService.refreshShop(player)
+        if snapshot.ok then
+            Net.send(player, "ShopUpdate", snapshot)
+        end
+    end,
+})
+
 game:BindToClose(function()
+    -- Charge live rounds before ProfileService closes/releases every profile.
+    MatchService.settleActiveUsage("shutdown")
     profiles:shutdown()
 end)
 
@@ -166,6 +220,58 @@ end
 Net.get("SetRoomConfig").OnServerInvoke = function(player, request)
     local ok, reason = MatchService.setRoomConfig(player, request)
     return { ok = ok == true, reason = reason }
+end
+
+Net.get("GetShop").OnServerInvoke = function(player)
+    local ok, snapshot = pcall(MatchService.getShop, player)
+    if not ok then
+        warn("[BnB] GetShop failed for " .. tostring(player.UserId) .. ": " .. tostring(snapshot))
+        return { ok = false, reason = "server_error" }
+    end
+    return snapshot
+end
+
+Net.get("SetLoadout").OnServerInvoke = function(player, request)
+    local ok, result = pcall(MatchService.setLoadout, player, request)
+    if not ok then
+        warn("[BnB] SetLoadout failed for " .. tostring(player.UserId) .. ": " .. tostring(result))
+        return { ok = false, reason = "server_error" }
+    end
+    return result
+end
+
+-- Roblox gives ProcessReceipt time to yield (profile flush/direct DataStore save).
+-- NotProcessedYet means "call me again"; a retry sees the stored PurchaseId and
+-- cannot double-grant.
+MarketplaceService.ProcessReceipt = function(receiptInfo)
+    local player = nil
+    if type(receiptInfo) == "table" and type(receiptInfo.PlayerId) == "number" then
+        player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
+        if player == nil then
+            -- The player may have disconnected after buying. A lightweight
+            -- identity is enough for the direct load/release path; there is no
+            -- live UI or room to refresh.
+            player = { UserId = receiptInfo.PlayerId, Parent = nil }
+        end
+    end
+    if player == nil then
+        return Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+
+    local ok, granted, reason = pcall(shopService.processReceipt, shopService, player, receiptInfo)
+    if not ok then
+        warn("[BnB] ProcessReceipt crashed: " .. tostring(granted))
+        return Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+    if not granted then
+        warn(string.format(
+            "[BnB] receipt %s deferred: %s",
+            tostring(receiptInfo and receiptInfo.PurchaseId),
+            tostring(reason)
+        ))
+        return Enum.ProductPurchaseDecision.NotProcessedYet
+    end
+    return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
 ---------------------------------------------------------------- 玩家进出

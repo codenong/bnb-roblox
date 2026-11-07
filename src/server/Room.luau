@@ -15,6 +15,7 @@ local Grid = require(Shared:WaitForChild("Grid"))
 local Map = require(Shared:WaitForChild("Map"))
 local Game = require(Shared:WaitForChild("Game"))
 local Net = require(Shared:WaitForChild("Net"))
+local Shop = require(Shared:WaitForChild("Shop"))
 
 local BotService = require(script.Parent:WaitForChild("BotService"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
@@ -48,6 +49,7 @@ local function buildRoster(defs)
             isBot = def.isBot == true,
             char = Characters.getChar(def.char).id,
             colorIndex = i - 1,
+            items = if type(def.carry) == "table" then table.clone(def.carry) else nil,
         }
     end
     return result
@@ -123,6 +125,7 @@ function Room.new(opts)
     self.charLockTicks = math.min(opts.charLockTicks or Constants.CHAR_LOCK_TICKS, self.waitingTicks - 1)
     self.random = opts.random or Random.new()
     self.onSettled = opts.onSettled
+    self.onUsageSettled = opts.onUsageSettled
 
     self.phase = "waiting"
     self.waitingLeft = self.waitingTicks
@@ -163,6 +166,9 @@ function Room.new(opts)
     self.roundNoAction = {}
     self.roundNoActionChecked = false
     self.roundEndReason = nil
+    -- Items are settled once per participant per round. This set survives a
+    -- participant leaving the room so a later round-end/save cannot charge twice.
+    self.usageSettled = {}
 
     return self
 end
@@ -333,10 +339,25 @@ function Room:_refreshWaitingRoster()
             isBot = false,
             char = record.char,
             colorIndex = i - 1,
+            -- Visible to everyone in the room, including spectators. This is the
+            -- effective carry (loadout capped by current stock), not the loadout
+            -- intent itself.
+            items = Shop.effectiveCarry(record.profile),
         }
     end
     self.roster = entries
     self.rosterById = indexRoster(entries)
+end
+
+-- Called by MatchService after a loadout edit so everyone in the waiting room
+-- sees the new carry immediately.
+function Room:refreshLoadouts(): boolean
+    if self.phase ~= "waiting" then
+        return false
+    end
+    self:_refreshWaitingRoster()
+    self:broadcastState()
+    return true
 end
 
 function Room:_buildState(record)
@@ -441,6 +462,45 @@ function Room:addMember(record)
     return true
 end
 
+-- Charge one participant's real item use. The callback receives copies so the
+-- profile can be updated even though the room is about to reset its game state.
+-- Marking first makes this idempotent for round end/leave/shutdown races.
+function Room:_settleUsageFor(record, reason: string): boolean
+    if not record or not self.game or self.usageSettled[record.id] then
+        return false
+    end
+    local used, carried = self.game:getItemUsage(record.id)
+    if not used then
+        return false
+    end
+    self.usageSettled[record.id] = true
+    if self.onUsageSettled then
+        local context = {
+            roomId = self.id,
+            mode = self.mode,
+            roundId = self.roundId,
+            reason = reason,
+        }
+        local ok, err = pcall(self.onUsageSettled, record, used, carried, context)
+        if not ok then
+            warn(string.format("[BnB] room %d item settlement failed: %s", self.id, tostring(err)))
+        end
+    end
+    return true
+end
+
+-- Settle every participant who has not been charged yet. Used at round end,
+-- when a player leaves mid-round, and by BindToClose before profiles are saved.
+function Room:settleActiveUsage(reason: string): number
+    local count = 0
+    for _, record in ipairs(self.roundParticipants) do
+        if self:_settleUsageFor(record, reason) then
+            count += 1
+        end
+    end
+    return count
+end
+
 function Room:removeMember(record)
     if not record or not self.memberById[record.id] then
         return false
@@ -482,9 +542,11 @@ function Room:removeMember(record)
     if self.phase == "playing" and self.game and self.roundParticipantById[record.id] then
         -- Leaving/disconnecting during a round is a forfeit. The participant is
         -- kept in the round list so settlement can record the loss after the
-        -- member itself has been detached.
+        -- member itself has been detached. Item use is settled now so a leaver
+        -- is not still holding an uncharged remote/needle.
         self.roundLeft[record.id] = true
         self.roundEndReason = "leave"
+        self:_settleUsageFor(record, "leave")
         self.game:markDisconnected(record.id)
         self:collectFx()
         if self.game.over then
@@ -576,6 +638,7 @@ function Room:_startRound()
             name = record.name,
             isBot = false,
             char = record.char,
+            carry = Shop.effectiveCarry(record.profile),
         })
     end
 
@@ -609,6 +672,7 @@ function Room:_startRound()
     self.roundNoAction = {}
     self.roundNoActionChecked = false
     self.roundEndReason = nil
+    self.usageSettled = {}
     for _, record in ipairs(participants) do
         self.roundParticipantById[record.id] = record
         self.roundActivity[record.id] = false
@@ -632,6 +696,12 @@ end
 -- Used both by the normal results -> waiting transition and when a room loses
 -- its last seat.
 function Room:resetForWaiting()
+    -- A round torn down by a recycle/room reset may never reach finishRound.
+    -- Settle any remaining participant before the game state is discarded.
+    if self.phase == "playing" then
+        self:settleActiveUsage("reset")
+    end
+    self.usageSettled = {}
     self.phase = "waiting"
     self.waitingLeft = self.waitingTicks
     self.resultsLeft = 0
@@ -714,6 +784,10 @@ function Room:finishRound()
     self.resultsLeft = self.resultsTicks
     self.snapshot:reset()
     self:broadcastState()
+
+    -- Charge actual item use before the stats/commit hook. Each participant is
+    -- charged at most once; someone who left earlier was already settled.
+    self:settleActiveUsage("round_end")
 
     if self.onSettled then
         local participants = table.clone(self.roundParticipants)

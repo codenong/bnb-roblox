@@ -3,6 +3,8 @@
 -- Free and purchased stock are separate buckets so the shop and the daily free
 -- needle can never spend each other's inventory.
 
+local Shop = require(script.Parent.Shop)
+
 local ProfileSchema = {}
 
 ProfileSchema.VERSION = 1
@@ -61,11 +63,7 @@ local function newInventory()
 end
 
 local function newLoadout()
-    local loadout = {}
-    for _, itemId in ipairs(ProfileSchema.ITEM_IDS) do
-        loadout[itemId] = 0
-    end
-    return loadout
+    return Shop.newLoadout()
 end
 
 function ProfileSchema.newProfile(): any
@@ -124,11 +122,9 @@ function ProfileSchema.normalize(value: any): any
     end
     result.inventory = inventory
 
-    local loadout = tableOrEmpty(result.loadout)
-    for _, itemId in ipairs(ProfileSchema.ITEM_IDS) do
-        loadout[itemId] = nonNegativeInt(loadout[itemId], 0)
-    end
-    result.loadout = loadout
+    -- Loadout is player intent and is capped at entry capacity, not at current
+    -- stock. Unknown fields are preserved like the rest of the schema.
+    result.loadout = Shop.normalizeLoadout(result.loadout)
 
     local stats = tableOrEmpty(result.stats)
     local versus = tableOrEmpty(stats.versus)
@@ -223,6 +219,52 @@ function ProfileSchema.totalStock(profile: any, itemId: any): number
         return 0
     end
     return nonNegativeInt(bucket.free, 0) + nonNegativeInt(bucket.purchased, 0)
+end
+
+function ProfileSchema.hasReceipt(profile: any, purchaseId: any): boolean
+    if type(profile) ~= "table" or type(purchaseId) ~= "string" or purchaseId == "" then
+        return false
+    end
+    local receipts = profile.receipts
+    return type(receipts) == "table" and receipts[purchaseId] ~= nil
+end
+
+-- Grants one paid product atomically with its receipt marker. A repeated
+-- PurchaseId is a no-op; the caller must still make sure the first grant is
+-- durable before telling Roblox the purchase was processed.
+function ProfileSchema.grantPurchase(
+    profile: any,
+    purchaseId: any,
+    itemId: any,
+    amount: any
+): (boolean, string?)
+    if type(profile) ~= "table" or type(profile.inventory) ~= "table" then
+        return false, "invalid_profile"
+    end
+    if type(purchaseId) ~= "string" or purchaseId == "" then
+        return false, "invalid_receipt"
+    end
+    if not ProfileSchema.isItemId(itemId) then
+        return false, "invalid_item"
+    end
+    if not isFiniteNumber(amount) or amount < 1 or amount % 1 ~= 0 then
+        return false, "invalid_amount"
+    end
+    if ProfileSchema.hasReceipt(profile, purchaseId) then
+        return false, "duplicate"
+    end
+
+    local receipts = profile.receipts
+    if type(receipts) ~= "table" then
+        receipts = {}
+        profile.receipts = receipts
+    end
+    receipts[purchaseId] = true
+    if not ProfileSchema.addStock(profile, itemId, "purchased", amount) then
+        receipts[purchaseId] = nil
+        return false, "invalid_item"
+    end
+    return true
 end
 
 -- All-or-nothing: check the combined total before touching either bucket.

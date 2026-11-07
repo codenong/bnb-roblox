@@ -33,7 +33,7 @@ done
 # --- profile data layer: pure Luau modules with a fake DataStore ---
 PROFILE_BUILD=build/profile
 mkdir -p "$PROFILE_BUILD"
-cp build/ProfileSchema.luau "$PROFILE_BUILD/"
+cp build/ProfileSchema.luau build/Shop.luau "$PROFILE_BUILD/"
 cp ../src/server/ProfileStore.luau ../src/server/ProfileService.luau "$PROFILE_BUILD/"
 cp profile/FakeDataStore.luau profile/profile_schema_test.luau profile/profile_store_test.luau profile/profile_store_faults_test.luau profile/profile_service_test.luau testlib.luau "$PROFILE_BUILD/"
 
@@ -52,7 +52,7 @@ mkdir -p "$MATCH_BUILD"
 for f in ../src/shared/*.luau; do
   cp "build/$(basename "$f")" "$MATCH_BUILD/"
 done
-for name in MatchService PlayerService Room SnapshotService VersusStats; do
+for name in MatchService PlayerService Room SnapshotService VersusStats ShopService; do
   {
     printf 'local __env = require("./TestEnv")\n'
     printf 'local game = __env.game\n'
@@ -64,6 +64,7 @@ for name in MatchService PlayerService Room SnapshotService VersusStats; do
       "../src/server/$name.luau"
   } > "$MATCH_BUILD/$name.luau"
 done
+cp ../src/server/ShopConfig.luau "$MATCH_BUILD/ShopConfig.luau"
 cp match/TestEnv.luau "$MATCH_BUILD/TestEnv.luau"
 cp match/StubBotService.luau "$MATCH_BUILD/BotService.luau"
 cp match/StubNet.luau "$MATCH_BUILD/Net.luau"
@@ -73,6 +74,10 @@ cp match/isolation_test.luau "$MATCH_BUILD/"
 cp match/versus_stats_test.luau "$MATCH_BUILD/"
 cp match/versus_test.luau "$MATCH_BUILD/"
 cp match/room_config_test.luau "$MATCH_BUILD/"
+cp match/shop_service_test.luau "$MATCH_BUILD/"
+cp match/shop_settlement_test.luau "$MATCH_BUILD/"
+cp match/shop_loadout_test.luau "$MATCH_BUILD/"
+cp match/shop_exit_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (room manager, stubbed server)"
@@ -87,13 +92,21 @@ echo "== versus_test.luau (tables, countdown, spectators, forfeits)"
 "$LUAU" "$MATCH_BUILD/versus_test.luau"
 echo "== room_config_test.luau (persistent rooms, host, name, password, notices)"
 "$LUAU" "$MATCH_BUILD/room_config_test.luau"
+echo "== shop_settlement_test.luau (carry snapshot, practice gating, idempotent settlement)"
+"$LUAU" "$MATCH_BUILD/shop_settlement_test.luau"
+echo "== shop_loadout_test.luau (shop snapshot, loadout caps, lock window, shutdown)"
+"$LUAU" "$MATCH_BUILD/shop_loadout_test.luau"
+echo "== shop_exit_test.luau (shop entry as a room exit, roomless shop)"
+"$LUAU" "$MATCH_BUILD/shop_exit_test.luau"
+echo "== shop_service_test.luau (receipts, durability, direct store path)"
+"$LUAU" "$MATCH_BUILD/shop_service_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client
 mkdir -p "$CLIENT_BUILD"
 {
   printf 'local __env = require("./ClientEnv")\n'
-  printf 'local game, Instance, Enum, script, task = __env.game, __env.Instance, __env.Enum, __env.script, __env.task\n'
+  printf 'local game, Instance, Enum, script, task, warn = __env.game, __env.Instance, __env.Enum, __env.script, __env.task, __env.warn\n'
   sed -E \
     -e 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
     -e 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \

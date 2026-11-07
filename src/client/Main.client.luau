@@ -2,6 +2,7 @@
 -- Client entry: receive snapshots, interpolate, render the 2D board and HUD,
 -- and send only input/action intents. No movement or collision runs here.
 
+local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -48,6 +49,9 @@ local getTablesRemote = Net.get("GetTables")
 local joinTableRemote = Net.get("JoinTable")
 local leaveTableRemote = Net.get("LeaveTable")
 local setRoomConfigRemote = Net.get("SetRoomConfig")
+local getShopRemote = Net.get("GetShop")
+local setLoadoutRemote = Net.get("SetLoadout")
+local shopUpdateRemote = Net.get("ShopUpdate")
 local noticeRemote = Net.get("Notice")
 
 ---------------------------------------------------------------- 状态
@@ -270,6 +274,14 @@ local CONFIG_ERRORS = {
     config_rate_limited = "操作太频繁，请稍后再试",
 }
 
+local SHOP_ERRORS = {
+    not_loaded = "数据仍在加载，请稍后再试",
+    not_waiting = "对局开始后无法调整装备",
+    locked = "倒计时最后 3 秒，装备已锁定",
+    invalid_request = "道具选择无效，请重试",
+    server_error = "保存失败，请重试",
+}
+
 local function loadLobbyTables()
     Hud.setLobbyMessage("正在读取桌子…")
     local ok, tables = pcall(function()
@@ -282,21 +294,36 @@ local function loadLobbyTables()
     end
 end
 
--- "换桌" leaves the current room before the browser appears. This is a
+-- "换桌" and opening the shop both leave the current room. This is a real
 -- server-side seat exit (the old countdown is cancelled or the round is
 -- forfeited as usual), not a paused timer. The player has no room until they
 -- choose practice or a versus table; leaving the browser means returning to a
--- fresh practice room.
-Hud.lobbyRequested.Event:Connect(function()
+-- fresh practice room. Mark the client as browsing before the request so an
+-- in-flight RoundState from the old room cannot take over the UI while the
+-- server is removing the seat.
+local function leaveToLobby()
+    local wasBrowsing = browsing
+    browsing = true
     local ok, result = pcall(function()
         return leaveTableRemote:InvokeServer()
     end)
     if not ok or type(result) ~= "table" or not result.ok then
-        return
+        browsing = wasBrowsing
+        return false, if type(result) == "table" then result.reason else nil
     end
-    browsing = true
     Hud.setLobbyOpen(true)
     loadLobbyTables()
+    return true
+end
+
+Hud.lobbyRequested.Event:Connect(function()
+    if browsing then
+        -- The refresh button also uses this signal; the player is already out
+        -- of a room, so only the table list needs reloading.
+        loadLobbyTables()
+        return
+    end
+    leaveToLobby()
 end)
 
 Hud.tableSelected.Event:Connect(function(target)
@@ -331,6 +358,73 @@ Hud.roomConfigSubmitted.Event:Connect(function(request)
     else
         Hud.setRoomConfigResult(false, CONFIG_ERRORS[result.reason] or "保存失败，请重试")
     end
+end)
+
+-- Opening the shop is an exit from the room, exactly like "换桌": the seat is
+-- released before the shop snapshot is requested, so no other player's waiting
+-- countdown is affected and the native Roblox purchase prompt cannot hold up a
+-- table. The room browser opens underneath the shop; closing the shop leaves the
+-- player there to choose practice or another table.
+Hud.shopRequested.Event:Connect(function()
+    if not browsing then
+        local left, reason = leaveToLobby()
+        if not left then
+            Hud.closeShop()
+            Hud.showNotice(JOIN_ERRORS[reason] or "暂时无法离开房间，请稍后再试")
+            return
+        end
+    end
+
+    local ok, snapshot = pcall(function()
+        return getShopRemote:InvokeServer()
+    end)
+    if not ok or type(snapshot) ~= "table" then
+        Hud.setShopMessage("读取道具失败，请稍后再试")
+        return
+    end
+    if not snapshot.ok then
+        Hud.setShopMessage(SHOP_ERRORS[snapshot.reason] or "读取道具失败，请稍后再试")
+        return
+    end
+    -- The player may have closed the panel while the leave/snapshot requests
+    -- were in flight; do not pop it open again in that case.
+    Hud.setShop(snapshot, Hud.isShopOpen())
+end)
+
+Hud.loadoutChangeRequested.Event:Connect(function(request)
+    if type(request) ~= "table" then
+        Hud.setLoadoutResult(false, SHOP_ERRORS.invalid_request)
+        return
+    end
+    local ok, result = pcall(function()
+        return setLoadoutRemote:InvokeServer(request)
+    end)
+    if not ok or type(result) ~= "table" then
+        Hud.setLoadoutResult(false, SHOP_ERRORS.server_error)
+        return
+    end
+    if result.ok then
+        Hud.setLoadoutResult(true, "装备已保存", result.shop)
+    else
+        Hud.setLoadoutResult(false, SHOP_ERRORS[result.reason] or "保存失败，请重试", result.shop)
+    end
+end)
+
+Hud.purchaseRequested.Event:Connect(function(productId)
+    if type(productId) ~= "number" then
+        return
+    end
+    local ok, err = pcall(function()
+        MarketplaceService:PromptProductPurchase(player, productId)
+    end)
+    if not ok then
+        warn("[BnB] PromptProductPurchase failed: " .. tostring(err))
+        Hud.setShopMessage("无法打开购买窗口，请稍后再试")
+    end
+end)
+
+shopUpdateRemote.OnClientEvent:Connect(function(snapshot)
+    Hud.setShop(snapshot, false)
 end)
 
 requestSync()

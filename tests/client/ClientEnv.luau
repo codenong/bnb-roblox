@@ -160,6 +160,15 @@ function Env.advanceTasks()
 end
 
 local services = {
+    MarketplaceService = {
+        PromptProductPurchase = function(_, player, productId)
+            if Env.promptError then
+                error(Env.promptError)
+            end
+            Env.purchasePrompts = Env.purchasePrompts or {}
+            table.insert(Env.purchasePrompts, { player = player, productId = productId })
+        end,
+    },
     Players = {
         LocalPlayer = {
             WaitForChild = function()
@@ -198,6 +207,11 @@ local services = {
     },
 }
 Env.guiService = services.GuiService
+
+Env.warnings = {}
+function Env.warn(message)
+    table.insert(Env.warnings, tostring(message))
+end
 
 Env.game = {
     GetService = function(_, name)

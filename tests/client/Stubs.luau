@@ -12,6 +12,12 @@ local function signal(name)
                 Env.signals[name] = fn
             end,
         },
+        Fire = function(_, ...)
+            local fn = Env.signals[name]
+            if fn then
+                fn(...)
+            end
+        end,
     }
 end
 
@@ -59,12 +65,34 @@ Stubs.Hud = {
         Env.roomConfigResults = Env.roomConfigResults or {}
         table.insert(Env.roomConfigResults, { ok = ok == true, message = message })
     end,
+    setShop = function(snapshot, open)
+        Env.shopSnapshots = Env.shopSnapshots or {}
+        table.insert(Env.shopSnapshots, { snapshot = snapshot, open = open })
+    end,
+    isShopOpen = function()
+        return Env.shopOpen ~= false
+    end,
+    closeShop = function()
+        Env.shopOpen = false
+        Env.shopClosed = true
+    end,
+    setShopMessage = function(message)
+        Env.shopMessages = Env.shopMessages or {}
+        table.insert(Env.shopMessages, message)
+    end,
+    setLoadoutResult = function(ok, message, shop)
+        Env.loadoutResults = Env.loadoutResults or {}
+        table.insert(Env.loadoutResults, { ok = ok == true, message = message, shop = shop })
+    end,
     charSelected = signal("charSelected"),
     mutePressed = signal("mutePressed"),
     loadingRetryPressed = signal("loadingRetryPressed"),
     lobbyRequested = signal("lobbyRequested"),
     tableSelected = signal("tableSelected"),
     roomConfigSubmitted = signal("roomConfigSubmitted"),
+    shopRequested = signal("shopRequested"),
+    loadoutChangeRequested = signal("loadoutChangeRequested"),
+    purchaseRequested = signal("purchaseRequested"),
 }
 
 Stubs.Input = {

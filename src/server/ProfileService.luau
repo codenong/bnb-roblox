@@ -61,6 +61,7 @@ function ProfileService:_drop(state, reason)
     end
     state.released = true
     state.closing = true
+    state.lockLost = true
     state.dirty = false
     if self.states[state.player] == state then
         self.states[state.player] = nil
@@ -106,7 +107,11 @@ function ProfileService:_runWorker(state)
         local ok, reason = self.store:save(state.handle, release)
 
         if ok then
-            if release then
+            if release and not state.dirty then
+                -- A mutation (for example a receipt grant) can arrive while the
+                -- release save is yielding. That write may not include it, so
+                -- loop once more before removing the state; flush() must not
+                -- report a receipt durable just because the lock was released.
                 self:_finish(state)
             end
         elseif reason == "lock_lost" then
@@ -268,6 +273,38 @@ function ProfileService:commitMany(records)
             self:_schedule(state)
         end
     end
+end
+
+-- Synchronously persist the current profile data. Receipt processing uses this
+-- to prove the grant is durable before telling Roblox it was handled. Returns
+-- false when the load state was dropped (lock loss) or the save did not finish
+-- before the timeout; the caller must then retry the receipt instead of
+-- acknowledging it.
+function ProfileService:flush(player, timeoutSeconds: number?): (boolean, string?)
+    local state = self.states[player]
+    if not state or state.released then
+        return false, "not_loaded"
+    end
+
+    state.dirty = true
+    self:_schedule(state)
+
+    local timeout = tonumber(timeoutSeconds) or 10
+    local deadline = os.clock() + math.max(0, timeout)
+    while not state.released and (state.dirty or state.worker) and os.clock() < deadline do
+        self.sleep(0.05)
+    end
+
+    if state.released then
+        if state.lockLost then
+            return false, "lock_lost"
+        end
+        return true
+    end
+    if state.dirty or state.worker then
+        return false, "timeout"
+    end
+    return true
 end
 
 function ProfileService:release(player)

@@ -17,6 +17,9 @@
 --                                    -> ok, reason, roomId
 -- SetRoomConfig C<=>S RemoteFunction {name?, password?} -> ok, reason
 --                                    host only, waiting only; password "" clears
+-- GetShop      C<=>S RemoteFunction  () -> {ok, items, locked, ...} shop snapshot
+-- SetLoadout   C<=>S RemoteFunction  {loadout} -> {ok, reason?, shop?}
+-- ShopUpdate   S->C RemoteEvent      fresh shop snapshot after a purchase
 -- Notice       S->C RemoteEvent      {message} targeted transient toast
 --
 -- Passwords only ever travel in the JoinTable request and the SetRoomConfig
@@ -43,6 +46,9 @@ local DEFINITIONS = {
     JoinTable = "RemoteFunction",
     LeaveTable = "RemoteFunction",
     SetRoomConfig = "RemoteFunction",
+    GetShop = "RemoteFunction",
+    SetLoadout = "RemoteFunction",
+    ShopUpdate = "RemoteEvent",
     Notice = "RemoteEvent",
 }
 

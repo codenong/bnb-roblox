@@ -627,4 +627,51 @@ do
     check("survivor wins", game.over and game.winner and game.winner.id == "a")
 end
 
+-- brought items, map pickups and settlement usage
+do
+    local game = makeGame(nil, 0, {
+        { id = "a", name = "A", carry = { needle = 2, remote = 1, kick = 1 } },
+        { id = "b", name = "B" },
+    })
+    clearField(game)
+    setTilePos(game, "a", 1, 1)
+    local a, b = game.players.a, game.players.b
+
+    check("carried needle starts in inventory", a.inv.needle == 2, a.inv.needle)
+    check("carried remote starts in inventory", a.inv.remote == 1, a.inv.remote)
+    check("a carried kick enables kicking", a.kick == true)
+    check("a player without items cannot kick", b.kick == false)
+
+    check("a remote can be placed", game:placeBomb("a", true))
+    check("placing a remote consumes one", a.inv.remote == 0, a.inv.remote)
+    check("placing a remote records its use", a.used.remote == 1, a.used.remote)
+
+    a.trapped = true
+    check("a carried needle frees a trapped player", game:useItem("a"))
+    check("using a needle consumes one", a.inv.needle == 1, a.inv.needle)
+    check("using a needle records its use", a.used.needle == 1, a.used.needle)
+
+    -- Simulate a map pickup. It changes the live inventory, not the brought
+    -- snapshot that settlement is capped against.
+    a.inv.needle += 1
+    a.trapped = true
+    check("a picked-up needle can also be used", game:useItem("a"))
+    check("only carried stock is tracked as brought", a.carried.needle == 2, a.carried.needle)
+    check("all real needs count as usage", a.used.needle == 2, a.used.needle)
+
+    -- Put a bomb directly in front of A and kick it.
+    setTilePos(game, "b", 2, 1)
+    check("B places the kick target", game:placeBomb("b"))
+    game:tryKick(a, "right")
+    check("a successful kick is recorded once", a.used.kick == 1, a.used.kick)
+
+    local used, carried = game:getItemUsage("a")
+    check("usage snapshot has all three items", used.needle == 2 and used.remote == 1 and used.kick == 1)
+    check("carry snapshot is independent from live inventory",
+        carried.needle == 2 and carried.remote == 1 and carried.kick == 1)
+    check("a player without brought items has zero carry",
+        game:getItemUsage("b").needle == 0)
+    check("an unknown player has no usage", game:getItemUsage("nobody") == nil)
+end
+
 TestLib.finish()

@@ -53,6 +53,14 @@ local function removeBomb(self, bomb)
     end
 end
 
+local function carriedCount(carry, itemId, maximum)
+    local value = if type(carry) == "table" then carry[itemId] else 0
+    if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+        return 0
+    end
+    return math.clamp(math.floor(value), 0, maximum)
+end
+
 function Game.new(playerDefs, opts)
     opts = opts or {}
     local self = setmetatable({}, Game)
@@ -79,6 +87,16 @@ function Game.new(playerDefs, opts)
     for i, def in ipairs(playerDefs or {}) do
         local spawn = Map.SPAWNS[((i - 1) % #Map.SPAWNS) + 1]
         local char = Characters.getChar(def.char)
+        -- Brought items are a snapshot for this round. `used` counts real uses,
+        -- including items picked up from the map; settlement later charges at
+        -- most the number that was brought, so a map pickup is free only once
+        -- the brought stock for that item is exhausted.
+        local carry = def.carry
+        local carried = {
+            needle = carriedCount(carry, "needle", Constants.MAX_NEEDLE),
+            remote = carriedCount(carry, "remote", Constants.MAX_REMOTE),
+            kick = carriedCount(carry, "kick", 1),
+        }
         local player = {
             id = def.id,
             name = def.name,
@@ -96,9 +114,11 @@ function Game.new(playerDefs, opts)
                 range = char.caps.range,
                 bombs = char.caps.bombs,
             },
-            inv = { needle = 0, remote = 0 },
+            inv = { needle = carried.needle, remote = carried.remote },
+            carried = carried,
+            used = { needle = 0, remote = 0, kick = 0 },
             eaten = {},
-            kick = false,
+            kick = carried.kick > 0,
             pushKey = nil,
             pushAcc = 0,
             mount = nil,
@@ -199,6 +219,7 @@ function Game:placeBomb(id: string, remote: boolean?): boolean
 
     if remote then
         player.inv.remote -= 1
+        player.used.remote += 1
     end
 
     self._bombSeq += 1
@@ -235,12 +256,31 @@ function Game:useItem(id: string): boolean
             return false
         end
         player.inv.needle -= 1
+        player.used.needle += 1
         player.trapped = false
         player.trapTicks = 0
         player.grace = Constants.EXPLOSION_TICKS + 10
         return true
     end
     return self:placeBomb(id, true)
+end
+
+-- Copy of the round's actual item usage and the carried snapshot it is charged
+-- against. Map pickups only change `inv`, never these two tables.
+function Game:getItemUsage(id: string)
+    local player = self.players[id]
+    if not player then
+        return nil
+    end
+    return {
+        needle = player.used.needle,
+        remote = player.used.remote,
+        kick = player.used.kick,
+    }, {
+        needle = player.carried.needle,
+        remote = player.carried.remote,
+        kick = player.carried.kick,
+    }
 end
 
 function Game:overlapsTile(player, tx: number, ty: number): boolean
@@ -405,6 +445,8 @@ function Game:tryKick(player, dir)
         return
     end
     bomb.slide = { dx = vec[1], dy = vec[2] }
+    -- The kick ability lasts the whole match; a successful kick is charged once.
+    player.used.kick = 1
 end
 
 function Game:updateBombSlides()

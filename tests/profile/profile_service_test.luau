@@ -19,6 +19,7 @@ local function newFakeStore()
         loadHook = nil,
         loadError = nil,
         saveError = nil,
+        saveHook = nil,
         lockLost = false,
     }
 
@@ -45,11 +46,16 @@ local function newFakeStore()
     end
 
     function store:save(handle, release: boolean?)
-        table.insert(self.saves, {
+        local entry = {
             userId = handle.userId,
             release = release == true,
-            currency = handle.data.currency,
-        })
+        }
+        table.insert(self.saves, entry)
+        -- Runs while the save is "in flight", before it returns to the worker.
+        if self.saveHook then
+            self.saveHook(handle, release == true)
+        end
+        entry.currency = handle.data.currency
         if self.saveError then
             local reason = self.saveError
             self.saveError = nil
@@ -325,6 +331,102 @@ do
         end
     end
     check("shutdown performs one release per profile", released == 2, released)
+end
+
+---------------------------------------------------------------- flush：购买收据的持久化屏障
+
+do
+    local store = newFakeStore()
+    local queue = newQueue()
+    local service = newService(store, {
+        spawn = queue.spawn,
+        sleep = function(_seconds: number)
+            queue.drain()
+        end,
+    })
+    local player = newPlayer(8, "Hana")
+    local profile = service:load(player)
+    profile.currency = 3
+
+    local ok, reason = service:flush(player, 1)
+    check("flush persists the live profile", ok == true, reason)
+    check("flush actually wrote the latest value", store.saves[#store.saves].currency == 3,
+        store.saves[#store.saves].currency)
+    check("flush does not release the profile", service:isLoaded(player))
+    check("flush leaves no dirty state", service:flush(player, 1) == true)
+end
+
+do
+    local store = newFakeStore()
+    local service = newService(store, {
+        spawn = function(fn)
+            table.insert(store.pending, fn)
+        end,
+        sleep = function(_seconds: number) end,
+    })
+    -- This service variant never drains the worker, so flush must time out.
+    store.pending = {}
+    local player = newPlayer(9, "Ivo")
+    service:load(player)
+    local ok, reason = service:flush(player, 0)
+    check("an unfinished flush reports a timeout", ok == false and reason == "timeout", reason)
+    check("a timed-out flush stays loaded", service:isLoaded(player))
+end
+
+do
+    local store = newFakeStore()
+    local queue = newQueue()
+    local service = newService(store, {
+        spawn = queue.spawn,
+        sleep = function(_seconds: number)
+            queue.drain()
+        end,
+    })
+    local player = newPlayer(10, "Jade")
+    service:load(player)
+    store.lockLost = true
+
+    local ok, reason = service:flush(player, 1)
+    check("a lost lock fails the flush", ok == false and reason == "lock_lost", reason)
+    check("a lost lock drops the profile", not service:isLoaded(player))
+    check("flush after the profile is gone reports not_loaded",
+        select(1, service:flush(player, 1)) == false)
+end
+
+do
+    local store = newFakeStore()
+    local queue = newQueue()
+    local service
+    service = newService(store, { spawn = queue.spawn })
+    local player = newPlayer(11, "Kai")
+    local profile = service:load(player)
+
+    -- Simulate a mutation landing while the release save is in flight. The
+    -- worker must write again before it releases the lock; otherwise a receipt
+    -- could be acknowledged from a save that never contained it.
+    local injected = false
+    store.saveHook = function(handle, release)
+        if release and not injected then
+            injected = true
+            handle.data.currency = 42
+            service:commitMany({ { player = player } })
+        end
+    end
+
+    service:release(player)
+    queue.drain()
+
+    local releasedSaves = 0
+    for _, save in ipairs(store.saves) do
+        if save.release then
+            releasedSaves += 1
+        end
+    end
+    check("a mutation during release triggers another save", releasedSaves == 2, releasedSaves)
+    check("the final release save includes the mutation",
+        store.saves[#store.saves].currency == 42, store.saves[#store.saves].currency)
+    check("the profile is released after the extra save", not service:isLoaded(player))
+    check("the live profile saw the mutation", profile.currency == 42)
 end
 
 TestLib.finish()

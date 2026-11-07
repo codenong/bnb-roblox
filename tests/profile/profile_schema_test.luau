@@ -127,4 +127,68 @@ do
     check("an explicit 0 is kept", zero.freeNeedle.progress == 0, zero.freeNeedle.progress)
 end
 
+---------------------------------------------------------------- 付费道具收据
+
+do
+    local profile = ProfileSchema.newProfile()
+    check("a new profile has no receipts", profile.receipts ~= nil and next(profile.receipts) == nil)
+    check("an unknown receipt is not consumed", not ProfileSchema.hasReceipt(profile, "p1"))
+
+    local badProfile, badReason = ProfileSchema.grantPurchase({}, "p1", "needle", 1)
+    check("a malformed profile refuses a grant", badProfile == false and badReason == "invalid_profile", badReason)
+    check("an empty receipt id is rejected", ProfileSchema.grantPurchase(profile, "", "needle", 1) == false)
+    check("a non-string receipt id is rejected", ProfileSchema.grantPurchase(profile, 42, "needle", 1) == false)
+    check("an unknown item is rejected", ProfileSchema.grantPurchase(profile, "p2", "mount", 1) == false)
+    check("a zero amount is rejected", ProfileSchema.grantPurchase(profile, "p3", "needle", 0) == false)
+    check("a fractional amount is rejected", ProfileSchema.grantPurchase(profile, "p4", "needle", 1.5) == false)
+    check("a NaN amount is rejected", ProfileSchema.grantPurchase(profile, "p5", "needle", 0 / 0) == false)
+    check("a rejected grant leaves no receipt", not ProfileSchema.hasReceipt(profile, "p4"))
+    check("a rejected grant leaves stock alone", ProfileSchema.totalStock(profile, "needle") == 0)
+
+    local granted, grantReason = ProfileSchema.grantPurchase(profile, "receipt-1", "needle", 2)
+    check("a valid grant succeeds", granted == true, grantReason)
+    check("a valid grant adds purchased stock",
+        profile.inventory.needle.purchased == 2, profile.inventory.needle.purchased)
+    check("a valid grant records the receipt", ProfileSchema.hasReceipt(profile, "receipt-1"))
+
+    local duplicate, duplicateReason = ProfileSchema.grantPurchase(profile, "receipt-1", "needle", 5)
+    check("a duplicate receipt is not granted", duplicate == false and duplicateReason == "duplicate", duplicateReason)
+    check("a duplicate receipt does not add stock",
+        profile.inventory.needle.purchased == 2, profile.inventory.needle.purchased)
+
+    local rollback = ProfileSchema.newProfile()
+    rollback.inventory.needle = nil
+    local ok, reason = ProfileSchema.grantPurchase(rollback, "receipt-2", "needle", 1)
+    check("an unusable inventory fails cleanly", ok == false and reason == "invalid_item", reason)
+    check("a failed inventory grant rolls back its receipt",
+        not ProfileSchema.hasReceipt(rollback, "receipt-2"))
+
+    local normalized = ProfileSchema.normalize({ receipts = { ["old"] = true } })
+    check("receipts survive normalization", ProfileSchema.hasReceipt(normalized, "old"))
+end
+
+---------------------------------------------------------------- 装备意向的持久化
+
+do
+    local profile = ProfileSchema.newProfile()
+    profile.inventory.needle.free = 2
+    profile.inventory.remote.purchased = 1
+    check("loadout defaults to empty", profile.loadout.needle == 0
+        and profile.loadout.remote == 0
+        and profile.loadout.kick == 0)
+
+    local saved = ProfileSchema.normalize({
+        loadout = { needle = 99, remote = 1.5, kick = -2, extra = "kept" },
+    })
+    check("saved loadout is capped", saved.loadout.needle == 2, saved.loadout.needle)
+    check("saved loadout floors", saved.loadout.remote == 1, saved.loadout.remote)
+    check("saved loadout clamps negatives", saved.loadout.kick == 0, saved.loadout.kick)
+    check("unknown loadout fields are preserved", saved.loadout.extra == "kept")
+
+    -- Loadout intent is independent from current stock: normalization must not
+    -- erase a preference just because the player owns nothing right now.
+    local empty = ProfileSchema.normalize({ loadout = { needle = 2 }, inventory = {} })
+    check("loadout survives an empty inventory", empty.loadout.needle == 2, empty.loadout.needle)
+end
+
 TestLib.finish()
