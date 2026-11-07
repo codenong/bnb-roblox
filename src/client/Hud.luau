@@ -200,7 +200,6 @@ local function newTextBox(parent, name, placeholder, size, position)
     box.BackgroundColor3 = PANEL
     box.BackgroundTransparency = 0.05
     box.BorderSizePixel = 0
-    box.AutoButtonColor = false
     box.ClearTextOnFocus = false
     box.MultiLine = false
     box.Text = ""
@@ -983,8 +982,29 @@ local function buildSettings()
     outline(panel, Color3.fromRGB(54, 107, 132), 1.5, 0.25)
 
     centeredLabel(panel, "Title", "房间设置", UDim2.fromOffset(420, 26), UDim2.fromOffset(20, 12), TEXT, 18)
-    label(panel, "NameLabel", "房间名（1–30 个字符）", UDim2.fromOffset(420, 16), UDim2.fromOffset(20, 44), SUBTLE, 10, false)
-    settingsNameBox = newTextBox(panel, "Name", "输入房间名", UDim2.fromOffset(420, 36), UDim2.fromOffset(20, 62))
+    label(
+        panel,
+        "NameLabel",
+        "房间名（最多 30 个字符，至少 5 个可见）",
+        UDim2.fromOffset(420, 16),
+        UDim2.fromOffset(20, 44),
+        SUBTLE,
+        10,
+        false
+    )
+    settingsNameBox = newTextBox(
+        panel,
+        "Name",
+        "最多 30 个字符，至少 5 个可见",
+        UDim2.fromOffset(420, 36),
+        UDim2.fromOffset(20, 62)
+    )
+    settingsNameBox:GetPropertyChangedSignal("Text"):Connect(function()
+        local limited = RoomName.limitInput(settingsNameBox.Text)
+        if limited ~= settingsNameBox.Text then
+            settingsNameBox.Text = limited
+        end
+    end)
     label(
         panel,
         "PasswordLabel",
@@ -1029,7 +1049,23 @@ local function buildSettings()
     local cancel = actionButton(panel, "Cancel", "取消", UDim2.fromOffset(110, 34), UDim2.fromOffset(170, 214), PANEL_3)
     cancel.Activated:Connect(closeSettingsOverlay)
     local function saveSettings()
-        local request = { name = settingsNameBox.Text }
+        local request = {}
+        local currentName = state and state.roomName or nil
+        local typedName = settingsNameBox.Text
+        -- Ship the name only when it changed. Default table names are shorter
+        -- than the five-visible-character minimum for user-typed names, so a
+        -- password-only save must not resend the prefilled default.
+        if typedName ~= (currentName or "") then
+            local normalized = RoomName.normalize(typedName)
+            if not normalized then
+                settingsStatus.TextColor3 = DANGER
+                settingsStatus.Text = "房间名不可用：最多 30 个字符，至少 5 个可见，且不能含不可见或控制字符"
+                return
+            end
+            if normalized ~= currentName then
+                request.name = normalized
+            end
+        end
         local password = settingsPasswordBox.Text
         if password ~= "" then
             if not isValidPassword(password) then
@@ -1038,6 +1074,10 @@ local function buildSettings()
                 return
             end
             request.password = password
+        end
+        if request.name == nil and request.password == nil then
+            closeSettingsOverlay()
+            return
         end
         submitSettings(request)
     end

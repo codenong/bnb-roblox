@@ -74,7 +74,10 @@ local Constants = {
     VERSUS_TABLES = 4,
     VERSUS_SPECTATORS = 4,
     -- Room-name/password rules. Names are measured in Unicode codepoints and are
-    -- filtered by the server before they are stored.
+    -- filtered by the server before they are stored. At least five codepoints
+    -- must be genuinely visible, so whitespace/format padding cannot make a
+    -- room name look blank in the browser.
+    ROOM_NAME_MIN_VISIBLE_CODEPOINTS = 5,
     ROOM_NAME_MAX_CODEPOINTS = 30,
     ROOM_PASSWORD_MIN_DIGITS = 4,
     ROOM_PASSWORD_MAX_DIGITS = 6,

@@ -96,28 +96,80 @@ do
     check("room name: 30 Chinese codepoints accepted", RoomName.normalize(string.rep("字", 30)) == string.rep("字", 30))
     local tooLong, tooLongErr = RoomName.normalize(string.rep("字", 31))
     check("room name: 31 codepoints rejected", tooLong == nil and tooLongErr == "invalid_name")
+    check("room name: five visible codepoints accepted", RoomName.normalize("abcde") == "abcde")
+    check("room name: four visible codepoints rejected", RoomName.normalize("abcd") == nil)
+    check("room name: spaces do not count as visible",
+        RoomName.normalize("a b c d") == nil and RoomName.normalize("a b c d e") == "a b c d e")
+    check("room name: newlines do not count as visible",
+        RoomName.normalize("ab\ncd") == nil and RoomName.normalize("abc\nde") == "abc\nde")
 
     check("room name: CRLF and CR normalize to LF",
-        RoomName.normalize("  a\r\nb\rc  ") == "a\nb\nc")
-    check("room name: a plain LF is allowed", RoomName.normalize("a\nb") == "a\nb")
+        RoomName.normalize("  abcde\r\nfghij\rklmno  ") == "abcde\nfghij\nklmno")
+    check("room name: a plain LF is allowed", RoomName.normalize("abcde\nfghij") == "abcde\nfghij")
     check("room name: leading/trailing spaces and newlines are trimmed",
-        RoomName.normalize(" \n 名字 \n ") == "名字")
-    check("room name: tab rejected", RoomName.normalize("a\tb") == nil)
-    check("room name: NUL rejected", RoomName.normalize("a" .. string.char(0) .. "b") == nil)
-    check("room name: DEL rejected", RoomName.normalize("a" .. string.char(127) .. "b") == nil)
-    check("room name: C1 control rejected", RoomName.normalize("a" .. string.char(0xC2, 0x9B) .. "b") == nil)
+        RoomName.normalize(" \n 名字五个字 \n ") == "名字五个字")
+    check("room name: tab rejected (even with enough visible text)", RoomName.normalize("abcde\tf") == nil)
+    check("room name: NUL rejected", RoomName.normalize("abcde" .. string.char(0) .. "f") == nil)
+    check("room name: DEL rejected", RoomName.normalize("abcde" .. string.char(127) .. "f") == nil)
+    check("room name: C1 control rejected", RoomName.normalize("abcde" .. string.char(0xC2, 0x9B) .. "f") == nil)
     check("room name: invalid UTF-8 rejected", RoomName.normalize(string.char(0xFF)) == nil)
     check("room name: all whitespace rejected", RoomName.normalize(" \n  ") == nil)
     check("room name: empty rejected", RoomName.normalize("") == nil)
     check("room name: non-string rejected", RoomName.normalize(5) == nil)
 
+    local invisible = {
+        { "no-break space", 0x00A0 },
+        { "soft hyphen", 0x00AD },
+        { "ogham space mark", 0x1680 },
+        { "en space", 0x2002 },
+        { "zero-width space", 0x200B },
+        { "zero-width non-joiner", 0x200C },
+        { "left-to-right mark", 0x200E },
+        { "right-to-left mark", 0x200F },
+        { "line separator", 0x2028 },
+        { "paragraph separator", 0x2029 },
+        { "right-to-left override", 0x202E },
+        { "narrow no-break space", 0x202F },
+        { "word joiner", 0x2060 },
+        { "right-to-left isolate", 0x2066 },
+        { "ideographic space", 0x3000 },
+        { "byte-order mark", 0xFEFF },
+        { "tag character", 0xE0041 },
+    }
+    for _, entry in ipairs(invisible) do
+        check("room name: " .. entry[1] .. " rejected",
+            RoomName.normalize("abcde" .. utf8.char(entry[2]) .. "f") == nil)
+    end
+
+    local blankGlyphs = { 0x034F, 0x180B, 0x115F, 0x17B4, 0x2800, 0x3164, 0xFFA0 }
+    for _, code in ipairs(blankGlyphs) do
+        check(string.format("room name: blank glyph U+%04X does not count", code),
+            RoomName.normalize(string.rep(utf8.char(code), 5)) == nil)
+    end
+    check("room name: blank glyphs cannot pad four visible characters",
+        RoomName.normalize("abcd" .. string.rep(utf8.char(0x2800), 10)) == nil)
+
     local fancy = "泡泡🎉！？"
     check("room name: Chinese/emoji/punctuation accepted", RoomName.normalize(fancy) == fancy)
+    local family = "👨‍👩‍👧‍👦"
+    check("room name: ZWJ emoji accepted", RoomName.normalize(family .. "房间名") == family .. "房间名")
     check("room name: display folds CR/LF to spaces", RoomName.display(" a\r\nb ") == "a b")
     check("room name: display of blank is nil", RoomName.display(" \n ") == nil)
-    check("room name: filtered text revalidated", RoomName.validateFiltered(" 过滤 ") == " 过滤 ")
+    check("room name: filtered text revalidated", RoomName.validateFiltered(" 过滤后的名 ") == " 过滤后的名 ")
+    check("room name: filtered text still needs five visible codepoints",
+        RoomName.validateFiltered(" 过滤 ") == nil)
     check("room name: overlong filtered text rejected", RoomName.validateFiltered(string.rep("x", 31)) == nil)
     check("room name: empty filtered text rejected", RoomName.validateFiltered("") == nil)
+
+    check("room input: exactly 30 codepoints unchanged",
+        RoomName.limitInput(string.rep("a", 30)) == string.rep("a", 30))
+    check("room input: 31 codepoints truncate to 30",
+        RoomName.limitInput(string.rep("a", 31)) == string.rep("a", 30))
+    check("room input: multibyte truncation stays valid",
+        RoomName.limitInput(string.rep("字", 31)) == string.rep("字", 30))
+    check("room input: emoji truncation stays valid",
+        RoomName.limitInput(string.rep("🎉", 31)) == string.rep("🎉", 30))
+    check("room input: non-string becomes empty", RoomName.limitInput(nil) == "")
 end
 
 ---------------------------------------------------------------- 默认预创建常驻房
@@ -238,17 +290,17 @@ do
     -- Five configuration writes are allowed per window. This block uses exactly
     -- five to also cover the field semantics.
     filters = {}
-    ok, reason = MatchService.setRoomConfig(a, { name = " 朋友\r\n房 ", password = "1234" })
+    ok, reason = MatchService.setRoomConfig(a, { name = " 朋友们的\r\n房 ", password = "1234" })
     check("host sets name and password together", ok == true, tostring(reason))
-    check("the filter receives the normalized name", filters[#filters] and filters[#filters].text == "朋友\n房",
+    check("the filter receives the normalized name", filters[#filters] and filters[#filters].text == "朋友们的\n房",
         filters[#filters] and filters[#filters].text)
     check("the filter receives the player's UserId", filters[#filters] and filters[#filters].userId == a.UserId)
     syncA = MatchService.getSync(a)
     syncB = MatchService.getSync(b)
-    check("the new name reaches the other seat", syncB.roomName == "朋友\n房", syncB.roomName)
+    check("the new name reaches the other seat", syncB.roomName == "朋友们的\n房", syncB.roomName)
     check("the other seat sees the password flag", syncB.hasPassword == true and syncB.isHost == false)
     local entry = getTableById(room.id)
-    check("the browser shows the new name", entry and entry.name == "朋友\n房", entry and entry.name)
+    check("the browser shows the new name", entry and entry.name == "朋友们的\n房", entry and entry.name)
     check("the browser shows the host name", entry and entry.hostName == "A", entry and entry.hostName)
     check("the browser never carries the password", not hasPasswordField(entry))
     check("sync never carries the password", not hasPasswordField(syncB))
@@ -257,17 +309,17 @@ do
 
     ok = MatchService.setRoomConfig(a, { password = "5678" })
     syncB = MatchService.getSync(b)
-    check("password-only update leaves the name unchanged", ok == true and syncB.roomName == "朋友\n房")
+    check("password-only update leaves the name unchanged", ok == true and syncB.roomName == "朋友们的\n房")
     check("password-only update replaces the password", room:checkPassword("5678") == true)
 
-    ok = MatchService.setRoomConfig(a, { name = "新名" })
+    ok = MatchService.setRoomConfig(a, { name = "新的房间名" })
     check("name-only update leaves the password set", ok == true and room:checkPassword("5678") == true)
-    check("name-only update changes the name", MatchService.getSync(b).roomName == "新名")
+    check("name-only update changes the name", MatchService.getSync(b).roomName == "新的房间名")
 
     ok = MatchService.setRoomConfig(a, { password = "" })
     check("an empty password clears the password", ok == true and room:hasPassword() == false)
 
-    ok = MatchService.setRoomConfig(a, { name = "朋友\n房", password = "1234" })
+    ok = MatchService.setRoomConfig(a, { name = "朋友们的\n房", password = "1234" })
     check("the fifth write in the window still succeeds", ok == true, tostring(reason))
 
     advance(Constants.WAITING_TICKS + 5)
@@ -335,8 +387,17 @@ do
     check("an empty name is rejected", ok == false and reason == "invalid_name", reason)
     ok, reason = MatchService.setRoomConfig(a, { name = "   " })
     check("a whitespace-only name is rejected", ok == false and reason == "invalid_name", reason)
-    ok, reason = MatchService.setRoomConfig(a, { name = "a\tb" })
+    ok, reason = MatchService.setRoomConfig(a, { name = "abcde\tf" })
     check("a control character in the name is rejected", ok == false and reason == "invalid_name", reason)
+    ok, reason = MatchService.setRoomConfig(a, { name = "abcd" })
+    check("a name with too few visible characters is rejected",
+        ok == false and reason == "invalid_name", reason)
+    ok, reason = MatchService.setRoomConfig(a, { name = "abcde" .. utf8.char(0x200B) .. "f" })
+    check("an invisible character in the name is rejected",
+        ok == false and reason == "invalid_name", reason)
+    -- Five rejected writes exhaust the short config window; move past it so the
+    -- password checks below exercise validation rather than rate limiting.
+    envClock += Constants.ROOM_CONFIG_WINDOW_SECONDS + 1
     ok, reason = MatchService.setRoomConfig(a, { password = "123" })
     check("a three-digit password is rejected", ok == false and reason == "invalid_password", reason)
     ok, reason = MatchService.setRoomConfig(a, { password = "1234567" })
@@ -355,7 +416,7 @@ do
 
     MatchService.joinVersus(a)
     local room = MatchService.getRoomFor(a)
-    check("password room setup", MatchService.setRoomConfig(a, { name = "密室", password = "1234" }) == true)
+    check("password room setup", MatchService.setRoomConfig(a, { name = "密室房间名", password = "1234" }) == true)
 
     local bPractice = MatchService.getRoomFor(b)
     local ok, reason = MatchService.joinVersus(b, room.id)
@@ -384,7 +445,7 @@ do
         tostring(countdownBeforeSpectator) .. " -> " .. tostring(MatchService.getSync(a).endsIn))
 
     local entry = getTableById(room.id)
-    check("the browser shows the locked room", entry and entry.hasPassword == true and entry.name == "密室")
+    check("the browser shows the locked room", entry and entry.hasPassword == true and entry.name == "密室房间名")
     check("the browser hides the host's password", not hasPasswordField(entry))
     check("sync hides the host's password", not hasPasswordField(MatchService.getSync(b)))
 
@@ -448,7 +509,7 @@ do
     local room = MatchService.getRoomFor(a)
 
     for i = 1, Constants.ROOM_CONFIG_ATTEMPT_MAX - 1 do
-        check("config write " .. i .. " succeeds", MatchService.setRoomConfig(a, { name = "n" .. i }) == true)
+        check("config write " .. i .. " succeeds", MatchService.setRoomConfig(a, { name = "name" .. i }) == true)
     end
     check("the last allowed config write succeeds",
         MatchService.setRoomConfig(a, { password = "1234" }) == true)
@@ -474,29 +535,29 @@ do
     filterImpl = function(text)
         return "过滤:" .. text
     end
-    local ok, reason = MatchService.setRoomConfig(a, { name = "abc" })
-    check("the filtered result is stored", ok == true and room:getRoomName() == "过滤:abc", tostring(reason))
-    check("the filter records text and UserId", filters[1] and filters[1].text == "abc"
+    local ok, reason = MatchService.setRoomConfig(a, { name = "abcde" })
+    check("the filtered result is stored", ok == true and room:getRoomName() == "过滤:abcde", tostring(reason))
+    check("the filter records text and UserId", filters[1] and filters[1].text == "abcde"
         and filters[1].userId == a.UserId)
 
     filterImpl = function()
         return nil
     end
-    ok, reason = MatchService.setRoomConfig(a, { name = "nil" })
+    ok, reason = MatchService.setRoomConfig(a, { name = "nil-name" })
     check("a filter returning nil is rejected", ok == false and reason == "filter_failed", reason)
-    check("a rejected filter leaves the name unchanged", room:getRoomName() == "过滤:abc")
+    check("a rejected filter leaves the name unchanged", room:getRoomName() == "过滤:abcde")
 
     filterImpl = function()
         error("filter exploded")
     end
     ok, reason = MatchService.setRoomConfig(a, { name = "throw" })
     check("a throwing filter is rejected", ok == false and reason == "filter_failed", reason)
-    check("a throwing filter leaves the name unchanged", room:getRoomName() == "过滤:abc")
+    check("a throwing filter leaves the name unchanged", room:getRoomName() == "过滤:abcde")
 
     filterImpl = function()
         return string.rep("x", Constants.ROOM_NAME_MAX_CODEPOINTS + 1)
     end
-    ok, reason = MatchService.setRoomConfig(a, { name = "long" })
+    ok, reason = MatchService.setRoomConfig(a, { name = "long-name" })
     check("an overlong filtered name is rejected", ok == false and reason == "filter_failed", reason)
 
     -- The filter may yield; leaving the room inside it must stop the write.
@@ -519,7 +580,7 @@ do
     local c = addPlayer("WaitViewer")
     MatchService.joinVersus(a)
     local room = MatchService.getRoomFor(a)
-    check("waiting transfer setup", MatchService.setRoomConfig(a, { name = "旧房", password = "1234" }) == true)
+    check("waiting transfer setup", MatchService.setRoomConfig(a, { name = "旧房间名字", password = "1234" }) == true)
     check("the guest joins", MatchService.joinVersus(b, room.id, "1234") == true)
     check("the viewer joins", MatchService.joinVersus(c, room.id, "1234") == true)
 
