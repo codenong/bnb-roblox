@@ -159,7 +159,14 @@ function Env.advanceTasks()
     end
 end
 
+local textChat = {
+    ChatWindowConfiguration = { Enabled = true },
+    ChatInputBarConfiguration = { Enabled = true },
+}
+Env.textChat = textChat
+
 local services = {
+    TextChatService = textChat,
     MarketplaceService = {
         PromptProductPurchase = function(_, player, productId)
             if Env.promptError then

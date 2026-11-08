@@ -18,6 +18,8 @@ local Hud = {}
 Hud.charSelected = Instance.new("BindableEvent")
 Hud.colorSelected = Instance.new("BindableEvent") -- color key, current character
 Hud.mutePressed = Instance.new("BindableEvent")
+Hud.chatPressed = Instance.new("BindableEvent")
+Hud.flatToggled = Instance.new("BindableEvent")
 Hud.loadingRetryPressed = Instance.new("BindableEvent")
 Hud.lobbyRequested = Instance.new("BindableEvent")
 -- Fired with "practice", "versus", or { mode = "versus", tableId = n, password? }.
@@ -41,6 +43,11 @@ local LOCKED_TINT = Color3.fromRGB(150, 150, 150) -- dims the portrait under the
 local DANGER = Color3.fromRGB(255, 104, 96)
 local SURVIVE = Color3.fromRGB(120, 226, 147)
 
+-- The old ceiling kept the board at the same 690x598 on every common desktop
+-- resolution. 1.6 uses more of a 1080p/1440p screen while still keeping the
+-- title clear of the Roblox topbar.
+local MAX_UI_SCALE = 1.6
+
 local CHAR_INFO = {
     baobao = {
         name = "宝宝",
@@ -63,6 +70,9 @@ local compact
 local titleLabel
 local subtitleLabel
 local soundButton
+local flatButton
+local chatButton
+local chatOpen = false
 local timerLabel
 local compactTimer
 local compactStatus
@@ -89,6 +99,8 @@ local waitingSwatches = {}
 local lobbyOverlay
 local lobbyStatus
 local lobbyMyItems
+local lobbyMyItemsStatus
+local lobbyMyItemCards = {}
 local lobbyTableRows = {}
 local lobbyTables = {}
 local passwordOverlay
@@ -541,7 +553,7 @@ local function buildCompact()
         compact,
         "Status",
         "观战",
-        UDim2.fromOffset(260, 30),
+        UDim2.fromOffset(240, 30),
         UDim2.fromOffset(166, 16),
         SUBTLE,
         10,
@@ -1542,18 +1554,94 @@ local function buildLobby()
     end
 
     label(lobbyOverlay, "MyItemsTitle", "我的道具", UDim2.fromOffset(300, 18), UDim2.fromOffset(22, 392), TEXT, 11, true)
-    lobbyMyItems = label(
+    lobbyMyItems = newFrame(
         lobbyOverlay,
         "MyItems",
+        UDim2.fromOffset(556, 46),
+        UDim2.fromOffset(22, 410),
+        PANEL,
+        1
+    )
+    lobbyMyItemsStatus = label(
+        lobbyMyItems,
+        "Status",
         "正在读取道具…",
-        UDim2.fromOffset(556, 60),
-        UDim2.fromOffset(22, 412),
+        UDim2.fromOffset(556, 46),
+        UDim2.fromOffset(0, 0),
         SUBTLE,
         11,
         false
     )
-    lobbyMyItems.TextWrapped = true
-    lobbyMyItems.TextYAlignment = Enum.TextYAlignment.Top
+    for i, itemId in ipairs(Shop.ITEM_ORDER) do
+        local info = Shop.ITEMS[itemId]
+        local card = newFrame(
+            lobbyMyItems,
+            "MyItem_" .. itemId,
+            UDim2.fromOffset(180, 46),
+            UDim2.fromOffset((i - 1) * 188, 0),
+            PANEL_2,
+            0.02
+        )
+        card.Visible = false
+        round(card, 0.12)
+        local stroke = outline(card, Color3.fromRGB(55, 100, 124), 1, 0.55)
+
+        local sprite = Sprites.ITEMS[itemId]
+        local iconId = if sprite then asset(sprite.assetKey) else ""
+        local image
+        local fallback
+        local mark
+        if sprite and iconId ~= "" then
+            image = Instance.new("ImageLabel")
+            image.Name = "Icon"
+            image.BackgroundTransparency = 1
+            image.BorderSizePixel = 0
+            image.Size = UDim2.fromOffset(34, 34)
+            image.Position = UDim2.fromOffset(12, 6)
+            image.ScaleType = Enum.ScaleType.Fit
+            image.Image = iconId
+            image.ImageRectSize = Vector2.new(sprite.frameWidth, sprite.frameHeight)
+            image.ImageRectOffset = Vector2.zero
+            image.Parent = card
+        else
+            fallback = newFrame(
+                card,
+                "Fallback",
+                UDim2.fromOffset(34, 34),
+                UDim2.fromOffset(12, 6),
+                PANEL_3,
+                0
+            )
+            round(fallback, 0.35)
+            mark = centeredLabel(
+                fallback,
+                "Mark",
+                info.short,
+                UDim2.fromOffset(34, 34),
+                UDim2.fromOffset(0, 0),
+                ACCENT,
+                14
+            )
+        end
+        local count = label(
+            card,
+            "Count",
+            "x0",
+            UDim2.fromOffset(114, 46),
+            UDim2.fromOffset(54, 0),
+            SUBTLE,
+            20,
+            true
+        )
+        lobbyMyItemCards[itemId] = {
+            card = card,
+            count = count,
+            image = image,
+            fallback = fallback,
+            mark = mark,
+            stroke = stroke,
+        }
+    end
 
     lobbyStatus = centeredLabel(
         lobbyOverlay,
@@ -2403,6 +2491,8 @@ local function layout()
         compact.Visible = true
         boardHost.Position = UDim2.fromOffset(10, 76)
         compact.Position = UDim2.fromOffset(10, 8)
+        flatButton.Position = UDim2.fromOffset(418, 16)
+        chatButton.Position = UDim2.fromOffset(484, 16)
         soundButton.Position = UDim2.fromOffset(550, 16)
     else
         stage.Size = UDim2.fromOffset(980, 600)
@@ -2412,6 +2502,8 @@ local function layout()
         compact.Visible = false
         boardHost.Position = UDim2.fromOffset(20, 64)
         sidebar.Position = UDim2.fromOffset(636, 64)
+        flatButton.Position = UDim2.fromOffset(764, 20)
+        chatButton.Position = UDim2.fromOffset(832, 20)
         soundButton.Position = UDim2.fromOffset(900, 20)
     end
     positionOverlays()
@@ -2419,7 +2511,7 @@ local function layout()
     local margin = if mobile then 8 else 28
     local sx = (viewport.X - margin * 2) / stage.Size.X.Offset
     local sy = (viewport.Y - margin * 2) / stage.Size.Y.Offset
-    uiScale.Scale = math.clamp(math.min(sx, sy), 0.35, 1.15)
+    uiScale.Scale = math.clamp(math.min(sx, sy), 0.35, MAX_UI_SCALE)
 end
 
 ---------------------------------------------------------------- 初始化
@@ -2507,6 +2599,50 @@ function Hud.init(screenGui)
         Hud.mutePressed:Fire()
     end)
     soundButton.ZIndex = 140000
+
+    -- Purely visual mode. Main.client owns the actual state and re-renders the
+    -- board; the label shows the mode currently in effect.
+    flatButton = Instance.new("TextButton")
+    flatButton.Name = "FlatButton"
+    flatButton.Size = UDim2.fromOffset(60, 24)
+    flatButton.Position = UDim2.fromOffset(764, 20)
+    flatButton.BackgroundColor3 = PANEL_2
+    flatButton.BackgroundTransparency = 0.05
+    flatButton.BorderSizePixel = 0
+    flatButton.AutoButtonColor = false
+    flatButton.Font = Enum.Font.GothamBold
+    flatButton.Text = "扁平"
+    flatButton.TextColor3 = ACCENT
+    flatButton.TextSize = 10
+    flatButton.Parent = stage
+    round(flatButton, 0.5)
+    outline(flatButton, Color3.fromRGB(75, 120, 145), 1, 0.45)
+    flatButton.Activated:Connect(function()
+        Hud.flatToggled:Fire()
+    end)
+    flatButton.ZIndex = 140000
+
+    -- The native TextChatService window is hidden by Main.client. This button
+    -- only toggles it; Main keeps the native Enabled flags and the label in sync.
+    chatButton = Instance.new("TextButton")
+    chatButton.Name = "ChatButton"
+    chatButton.Size = UDim2.fromOffset(60, 24)
+    chatButton.Position = UDim2.fromOffset(832, 20)
+    chatButton.BackgroundColor3 = PANEL_2
+    chatButton.BackgroundTransparency = 0.15
+    chatButton.BorderSizePixel = 0
+    chatButton.AutoButtonColor = false
+    chatButton.Font = Enum.Font.GothamBold
+    chatButton.Text = "聊天"
+    chatButton.TextColor3 = TEXT
+    chatButton.TextSize = 10
+    chatButton.Parent = stage
+    round(chatButton, 0.5)
+    outline(chatButton, Color3.fromRGB(75, 120, 145), 1, 0.45)
+    chatButton.Activated:Connect(function()
+        Hud.chatPressed:Fire()
+    end)
+    chatButton.ZIndex = 140000
 
     buildSidebar()
     buildCompact()
@@ -2672,20 +2808,69 @@ function Hud.setShop(snapshot, open: boolean?)
     renderShop()
 end
 
+local function snapshotStock(entry): number
+    if type(entry) ~= "table" then
+        return 0
+    end
+    local function finite(value)
+        if type(value) ~= "number" or value ~= value or value == math.huge or value == -math.huge then
+            return nil
+        end
+        return math.max(0, math.floor(value))
+    end
+    local stock = finite(entry.stock)
+    if stock == nil then
+        stock = (finite(entry.free) or 0) + (finite(entry.purchased) or 0)
+    end
+    return stock
+end
+
 -- Read-only owned-inventory summary for the lobby. The same GetShop snapshot
 -- feeds the shop rows, so the two views can never disagree about stock.
 function Hud.setMyItems(snapshot)
-    if not lobbyMyItems then
+    if not lobbyMyItems or not lobbyMyItemsStatus then
         return
     end
     if type(snapshot) ~= "table" or snapshot.ok ~= true or type(snapshot.items) ~= "table" then
-        lobbyMyItems.Text = "读取道具失败，请点刷新重试"
-        lobbyMyItems.TextColor3 = DANGER
+        lobbyMyItemsStatus.Visible = true
+        lobbyMyItemsStatus.Text = "读取道具失败，请点刷新重试"
+        lobbyMyItemsStatus.TextColor3 = DANGER
+        for _, entry in pairs(lobbyMyItemCards) do
+            entry.card.Visible = false
+        end
         return
     end
-    local text = Shop.describeOwned(snapshot.items)
-    lobbyMyItems.Text = text
-    lobbyMyItems.TextColor3 = if text == "还没有道具" then SUBTLE else TEXT
+
+    local stockById = {}
+    for _, item in ipairs(snapshot.items) do
+        if type(item) == "table" and type(item.id) == "string" then
+            stockById[item.id] = snapshotStock(item)
+        end
+    end
+
+    lobbyMyItemsStatus.Visible = false
+    for _, itemId in ipairs(Shop.ITEM_ORDER) do
+        local entry = lobbyMyItemCards[itemId]
+        if entry then
+            local stock = stockById[itemId] or 0
+            local owned = stock > 0
+            entry.card.Visible = true
+            entry.card.BackgroundTransparency = if owned then 0.02 else 0.55
+            entry.stroke.Color = if owned then Color3.fromRGB(92, 160, 190) else Color3.fromRGB(55, 100, 124)
+            entry.stroke.Transparency = if owned then 0.35 else 0.75
+            entry.count.Text = "x" .. stock
+            entry.count.TextColor3 = if owned then TEXT else SUBTLE
+            if entry.image then
+                entry.image.ImageTransparency = if owned then 0 else 0.6
+            end
+            if entry.fallback then
+                entry.fallback.BackgroundTransparency = if owned then 0 else 0.55
+            end
+            if entry.mark then
+                entry.mark.TextTransparency = if owned then 0 else 0.5
+            end
+        end
+    end
 end
 
 function Hud.isShopOpen(): boolean
@@ -2724,6 +2909,24 @@ function Hud.setMuted(value)
         soundButton.Text = if muted then "已静音" else "声音开"
         soundButton.TextColor3 = if muted then SUBTLE else TEXT
         soundButton.BackgroundTransparency = if muted then 0.35 else 0.15
+    end
+end
+
+function Hud.setChatOpen(value)
+    chatOpen = value == true
+    if chatButton then
+        chatButton.Text = if chatOpen then "收起" else "聊天"
+        chatButton.TextColor3 = if chatOpen then ACCENT else TEXT
+        chatButton.BackgroundTransparency = if chatOpen then 0.05 else 0.15
+    end
+end
+
+function Hud.setFlatMode(value)
+    local flat = value == true
+    if flatButton then
+        flatButton.Text = if flat then "扁平" else "立体"
+        flatButton.TextColor3 = if flat then ACCENT else SUBTLE
+        flatButton.BackgroundTransparency = if flat then 0.05 else 0.35
     end
 end
 

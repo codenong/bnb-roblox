@@ -38,6 +38,52 @@ end
 ---------------------------------------------------------------- 晚加入
 check("late join applies the sync snapshot grid", Env.lastGrid == gridSyncSnapshot)
 
+---------------------------------------------------------------- 聊天窗口默认隐藏，按钮切换，进对局自动收起
+do
+    local textChat = Env.textChat
+    local window = textChat.ChatWindowConfiguration
+    local input = textChat.ChatInputBarConfiguration
+
+    check("chat window starts hidden", window.Enabled == false)
+    check("chat input starts hidden", input.Enabled == false)
+    check("the chat button starts closed", Env.chatOpen == false)
+
+    Env.signals.chatPressed()
+    check("the chat button opens the native window", window.Enabled == true)
+    check("the chat button opens the native input", input.Enabled == true)
+    check("the chat button shows its open state", Env.chatOpen == true)
+
+    Env.signals.chatPressed()
+    check("the chat button closes the native window", window.Enabled == false)
+    check("the chat button closes the native input", input.Enabled == false)
+    check("the chat button shows its closed state", Env.chatOpen == false)
+
+    fire("RoundState", { phase = "waiting", roundId = 30, roster = {}, yourId = "u1", grid = { "w" } })
+    Env.signals.chatPressed()
+    check("chat can be opened while waiting", Env.chatOpen == true)
+
+    fire("RoundState", { phase = "playing", roundId = 31, roster = {}, yourId = "u1", grid = { "p" } })
+    check("entering a live round closes chat", Env.chatOpen == false)
+    check("entering a live round closes the native window", window.Enabled == false)
+end
+
+---------------------------------------------------------------- 视觉扁平化开关
+do
+    check("visual mode starts flat in every renderer", Env.boardFlat == true
+        and Env.rendererFlat == true
+        and Env.hudFlat == true)
+
+    Env.signals.flatToggled()
+    check("the toggle switches the board to legacy 3D", Env.boardFlat == false)
+    check("the toggle switches characters to legacy 3D", Env.rendererFlat == false)
+    check("the toggle updates the button state", Env.hudFlat == false)
+
+    Env.signals.flatToggled()
+    check("the toggle switches every layer back to flat", Env.boardFlat == true
+        and Env.rendererFlat == true
+        and Env.hudFlat == true)
+end
+
 ---------------------------------------------------------------- 到达即应用
 local roundGrid = { "round-1" }
 playing(2, roundGrid)

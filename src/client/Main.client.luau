@@ -6,6 +6,7 @@ local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local TextChatService = game:GetService("TextChatService")
 local UserInputService = game:GetService("UserInputService")
 
 local player = Players.LocalPlayer
@@ -32,10 +33,45 @@ gui.DisplayOrder = 10
 gui.Parent = playerGui
 
 Hud.init(gui)
+
+-- The native chat sits above the ScreenGui. Hide it by default so it cannot
+-- cover the board; the HUD chat button is the only way to bring it back.
+local chatOpen = false
+local function setChatOpen(open: boolean)
+    chatOpen = open == true
+    local window = TextChatService and TextChatService.ChatWindowConfiguration
+    local input = TextChatService and TextChatService.ChatInputBarConfiguration
+    if window then
+        window.Enabled = chatOpen
+    end
+    if input then
+        input.Enabled = chatOpen
+    end
+    Hud.setChatOpen(chatOpen)
+end
+setChatOpen(false)
+Hud.chatPressed.Event:Connect(function()
+    setChatOpen(not chatOpen)
+end)
+
 local board = Board.new(Hud.getBoardHost())
 Renderer.init(board)
 Input.init(gui)
 Audio.init()
+
+-- Lightweight flattening is the default look. It is a session-only visual
+-- preference: collision, snapshots and saved profiles are untouched.
+local flatVisual = true
+local function setFlatVisual(enabled: boolean)
+    flatVisual = enabled == true
+    Board.setFlatMode(flatVisual)
+    Renderer.setFlatMode(flatVisual)
+    Hud.setFlatMode(flatVisual)
+end
+Hud.flatToggled.Event:Connect(function()
+    setFlatVisual(not flatVisual)
+end)
+setFlatVisual(flatVisual)
 
 local inputRemote = Net.get("Input")
 local actionRemote = Net.get("Action")
@@ -124,6 +160,12 @@ local function applyState(newState)
         or (previous.phase ~= "waiting" and newState.phase == "waiting")
 
     currentState = newState
+
+    -- Entering a live round closes an intentionally opened chat so it cannot
+    -- cover the board. The player can still reopen it with the chat button.
+    if newState.phase == "playing" and (previous == nil or previous.phase ~= "playing") then
+        setChatOpen(false)
+    end
 
     if reset then
         resetVisibleRound()

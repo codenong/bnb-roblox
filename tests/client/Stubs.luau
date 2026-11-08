@@ -32,6 +32,9 @@ Stubs.Board = {
         Env.gridCalls += 1
     end,
     setSliding = function() end,
+    setFlatMode = function(value)
+        Env.boardFlat = value == true
+    end,
 }
 
 Stubs.Hud = {
@@ -45,6 +48,12 @@ Stubs.Hud = {
     end,
     applySnapshot = function() end,
     setMuted = function() end,
+    setChatOpen = function(open)
+        Env.chatOpen = open == true
+    end,
+    setFlatMode = function(value)
+        Env.hudFlat = value == true
+    end,
     setLoadingTimedOut = function(value)
         Env.loadingTimedOut = value == true
     end,
@@ -87,6 +96,8 @@ Stubs.Hud = {
     charSelected = signal("charSelected"),
     colorSelected = signal("colorSelected"),
     mutePressed = signal("mutePressed"),
+    chatPressed = signal("chatPressed"),
+    flatToggled = signal("flatToggled"),
     loadingRetryPressed = signal("loadingRetryPressed"),
     lobbyRequested = signal("lobbyRequested"),
     tableSelected = signal("tableSelected"),
@@ -121,6 +132,9 @@ Stubs.Renderer = {
     init = function() end,
     setRoster = function() end,
     setYourId = function() end,
+    setFlatMode = function(value)
+        Env.rendererFlat = value == true
+    end,
     update = function() end,
     clear = function() end,
 }

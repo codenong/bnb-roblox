@@ -13,9 +13,25 @@ local Board = require(script.Parent:WaitForChild("Board"))
 
 local T = Constants.TILE
 local VISUAL_DY = Constants.VISUAL_DY
-local H = T * 1.3
+local LEGACY_H = T * 1.3
+local FLAT_H = T * 1.1
+-- Flat mode keeps characters and items inside their 40x40 collision tile.
+-- The legacy mode retains the taller pseudo-3D offsets for comparison.
+local flatMode = true
 
 local Renderer = {}
+
+local function characterHeight(): number
+    return if flatMode then FLAT_H else LEGACY_H
+end
+
+local function visualDy(): number
+    return if flatMode then 0 else VISUAL_DY
+end
+
+local function groundOffset(): number
+    return T * (if flatMode then 0.45 else 0.42)
+end
 
 local board: Frame
 local rosterById = {}
@@ -251,7 +267,7 @@ local function setItemVisual(image: ImageLabel, fallback: TextLabel, kind: strin
 end
 
 local function updateItemUnit(unit, kind: string, x: number, y: number, now: number)
-    unit.root.Position = UDim2.fromOffset(x * T + T / 2, y * T + T / 2 + VISUAL_DY)
+    unit.root.Position = UDim2.fromOffset(x * T + T / 2, y * T + T / 2 + visualDy())
     unit.shadow.Visible = true
     setZRecursive(unit.root, 100 + y * 100 + 20)
     setItemVisual(unit.image, unit.fallback, kind, now)
@@ -307,7 +323,7 @@ end
 
 local function updateBombUnit(unit, bomb, now: number)
     local sx = bomb.sx or (bomb.x * T + T / 2)
-    local sy = (bomb.sy or (bomb.y * T + T / 2)) + VISUAL_DY
+    local sy = (bomb.sy or (bomb.y * T + T / 2)) + visualDy()
     unit.root.Position = UDim2.fromOffset(sx, sy)
 
     local urgent = not bomb.remote and (bomb.fuse or 999) < 20
@@ -627,7 +643,8 @@ local function updatePlayerUnit(unit, player, roster, now: number, warmup: numbe
     local footRow = math.floor((player.y or 0) / T)
     local subRow = math.floor((((player.y or 0) % T) / T) * 20)
     local z = 100 + footRow * 100 + 50 + subRow
-    local groundY = interpolatedY + T * 0.42 + VISUAL_DY
+    local h = characterHeight()
+    local groundY = interpolatedY + groundOffset() + visualDy()
     local feetY = groundY - lift
 
     unit.root.Position = UDim2.fromOffset(interpolatedX, groundY)
@@ -661,9 +678,12 @@ local function updatePlayerUnit(unit, player, roster, now: number, warmup: numbe
     unit.body.Position = UDim2.fromOffset(0, -lift)
     unit.bodyFallback.Position = UDim2.fromOffset(0, -lift - (moving and math.abs(math.sin(now * 8)) * 1.5 or 0))
     unit.bodyFallback.BackgroundColor3 = color
+    unit.bodyFallback.Size = if flatMode
+        then UDim2.fromOffset(27, 30)
+        else UDim2.fromOffset(30, 34)
 
     if id ~= "" then
-        local bodyHeight = anim.drawHeight
+        local bodyHeight = if flatMode then FLAT_H else anim.drawHeight
         local bodyWidth = anim.frameWidth * bodyHeight / anim.frameHeight
         unit.body.Size = UDim2.fromOffset(bodyWidth, bodyHeight)
         setImageRect(unit.body, id, anim.frameWidth, anim.frameHeight, frame, row - 1)
@@ -715,7 +735,7 @@ local function updatePlayerUnit(unit, player, roster, now: number, warmup: numbe
         trapAt[player.id] = trapAt[player.id] or now
         local age = now - trapAt[player.id]
         local bigId = asset(Sprites.SHEETS.big_popo.assetKey)
-        local bubbleY = feetY - H * 0.5
+        local bubbleY = feetY - h * 0.5
         unit.bubble.Position = UDim2.fromOffset(0, bubbleY - groundY)
         unit.bubbleFallback.Position = UDim2.fromOffset(0, bubbleY - groundY)
         if bigId ~= "" then
@@ -741,7 +761,7 @@ local function updatePlayerUnit(unit, player, roster, now: number, warmup: numbe
         unit.bubbleFallback.Visible = false
     end
 
-    local nameY = -lift - H - (trapped and 10 or 2)
+    local nameY = -lift - h - (trapped and 10 or 2)
     unit.name.Text = roster.name or player.id
     unit.name.TextColor3 = color
     unit.name.Position = UDim2.fromOffset(0, nameY)
@@ -755,13 +775,13 @@ local function updatePlayerUnit(unit, player, roster, now: number, warmup: numbe
         unit.marker.TextSize = if countdown then 22 else 16
         unit.marker.Position = UDim2.fromOffset(
             0,
-            -lift - H - 22 - (countdown and math.abs(math.sin(now * 3)) * 8 or 0)
+            -lift - h - 22 - (countdown and math.abs(math.sin(now * 3)) * 8 or 0)
         )
     end
 
     unit.needle.Visible = trapped and (player.inv and player.inv.needle or 0) > 0
     if unit.needle.Visible then
-        unit.needle.Position = UDim2.fromOffset(0, -lift - H - (trapped and 28 or 16))
+        unit.needle.Position = UDim2.fromOffset(0, -lift - h - (trapped and 28 or 16))
     end
 
     setZRecursive(unit.root, z)
@@ -830,7 +850,7 @@ local function updateLoot(shots, now)
         local py = shot.y0 + (shot.y1 - shot.y0) * progress
         local dx, dy = shot.x1 - shot.x0, shot.y1 - shot.y0
         local arc = (T * 0.9 + math.sqrt(dx * dx + dy * dy) * 0.25) * math.sin(math.pi * progress)
-        unit.root.Position = UDim2.fromOffset(px, py - arc + VISUAL_DY)
+        unit.root.Position = UDim2.fromOffset(px, py - arc + visualDy())
         unit.shadow.Visible = progress >= 1
         setItemVisual(unit.image, unit.fallback, shot.kind, now)
         setZRecursive(unit.root, 8000)
@@ -848,17 +868,23 @@ local function updateSlides(slides, now)
         local progress = math.min(1, 1 - (slide.left or 0) / total)
         local x = (slide.fx + (slide.tx - slide.fx) * progress) * T
         local y = (slide.fy + (slide.ty - slide.fy) * progress) * T
-        unit.root.Position = UDim2.fromOffset(x, y + T / 8)
+        unit.root.Position = UDim2.fromOffset(x, y + (if flatMode then 0 else T / 8))
 
         local id = asset(Sprites.SHEETS.crate.assetKey)
         if id ~= "" then
             setFullImage(unit.image, id)
             unit.image.Visible = true
-            unit.image.Size = UDim2.fromOffset(T, T * 1.2)
+            unit.image.Size = if flatMode
+                then UDim2.fromOffset(T, T)
+                else UDim2.fromOffset(T, T * 1.2)
             unit.fallback.Visible = false
         else
             unit.image.Visible = false
             unit.fallback.Visible = true
+            unit.fallback.Position = UDim2.fromOffset(2, if flatMode then 2 else 0)
+            unit.fallback.Size = if flatMode
+                then UDim2.fromOffset(T - 4, T - 4)
+                else UDim2.fromOffset(T - 4, 43)
         end
 
         setZRecursive(unit.root, 100 + math.floor(y / T) * 100 + 40)
@@ -877,16 +903,17 @@ local function updateDeaths(now)
                 effect.unit = unit
             end
             unit.root.Visible = true
+            local h = characterHeight()
             unit.root.Position = UDim2.fromOffset(
                 effect.x,
-                effect.y + T * 0.42 + VISUAL_DY
+                effect.y + groundOffset() + visualDy()
             )
 
             local die = Sprites.DIE[effect.char] or Sprites.DIE.baobao
             local id = asset(die.assetKey)
             if id ~= "" then
                 local anim = Sprites.ANIM[effect.char] or Sprites.ANIM.baobao
-                local scale = H / anim.frameHeight
+                local scale = h / anim.frameHeight
                 local width = die.frameWidth * scale
                 local height = die.frameHeight * scale
                 local frame = math.min(die.frames - 1, math.floor(age / 0.1))
@@ -903,7 +930,7 @@ local function updateDeaths(now)
                     unit.bubble.Text = "泡"
                     unit.bubble.Size = UDim2.fromOffset(42 + t * 24, 42 + t * 24)
                     unit.bubble.BackgroundTransparency = math.min(0.9, 0.4 + t * 0.4)
-                    unit.bubble.Position = UDim2.fromOffset(0, -H * 0.5)
+                    unit.bubble.Position = UDim2.fromOffset(0, -h * 0.5)
                 end
             end
             setZRecursive(unit.root, 9100)
@@ -946,6 +973,11 @@ end
 
 function Renderer.init(parent: Frame)
     board = parent
+end
+
+-- Purely visual: existing units pick up the new dimensions on the next frame.
+function Renderer.setFlatMode(enabled)
+    flatMode = enabled == true
 end
 
 function Renderer.setRoster(list)

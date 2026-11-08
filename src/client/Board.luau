@@ -20,6 +20,10 @@ local Board = {}
 local board: Frame
 local obstacles = {}
 local floorBuilt = false
+-- Flat mode keeps every static sprite inside its own collision tile. The
+-- legacy mode retains the taller pseudo-3D overhang for comparison.
+local flatMode = true
+local lastRows = nil
 local function asset(key: string): string
     return AssetIds[key] or ""
 end
@@ -67,8 +71,8 @@ local function makeBoxFallback(parent: Instance, x: number, y: number, kind: str
         then Color3.fromRGB(101, 55, 28)
         else Color3.fromRGB(205, 142, 45)
     box.BorderSizePixel = 0
-    box.Position = UDim2.fromOffset(x + 2, y + 5)
-    box.Size = UDim2.fromOffset(T - 4, 43)
+    box.Position = UDim2.fromOffset(x + 2, y + (if flatMode then 2 else 5))
+    box.Size = UDim2.fromOffset(T - 4, if flatMode then T - 4 else 43)
     box.ZIndex = 2
     box.Parent = parent
 
@@ -116,13 +120,17 @@ local function makeObstacle(kind: string, x: number, y: number)
 
     if kind == "box" or kind == "crate" then
         local sheet = Sprites.SHEETS[if kind == "crate" then "crate" else "box"]
-        local image = makeImage(root, sheet.assetKey, x * T, y * T + T / 8, T, T * 1.2)
+        local image = if flatMode
+            then makeImage(root, sheet.assetKey, x * T, y * T, T, T)
+            else makeImage(root, sheet.assetKey, x * T, y * T + T / 8, T, T * 1.2)
         if not image then
             makeBoxFallback(root, x * T, y * T, kind)
         end
     elseif kind == "cannon" then
         local sheet = Sprites.SHEETS.cannon
-        local image = makeImage(root, sheet.assetKey, x * T, y * T - T, T, T * 2)
+        local image = if flatMode
+            then makeImage(root, sheet.assetKey, x * T, y * T - T * 0.3, T, T * 1.3)
+            else makeImage(root, sheet.assetKey, x * T, y * T - T, T, T * 2)
         if not image then
             local base = Instance.new("Frame")
             base.BackgroundColor3 = Color3.fromRGB(30, 38, 50)
@@ -141,8 +149,8 @@ local function makeObstacle(kind: string, x: number, y: number)
             local barrel = Instance.new("Frame")
             barrel.BackgroundColor3 = Color3.fromRGB(12, 16, 22)
             barrel.BorderSizePixel = 0
-            barrel.Position = UDim2.fromOffset(T / 2 - 4, -10)
-            barrel.Size = UDim2.fromOffset(8, 24)
+            barrel.Position = UDim2.fromOffset(T / 2 - 4, if flatMode then -2 else -10)
+            barrel.Size = UDim2.fromOffset(8, if flatMode then 16 else 24)
             barrel.ZIndex = 3
             barrel.Parent = root
         end
@@ -197,18 +205,33 @@ local function buildFloor()
         end
     end
 
-    -- Central mast is static; keep it above row 7 obstacles but below row 7 items.
-    local mast = makeObstacleRoot(5, 2, 100 + 7 * 100 + 5)
+end
+
+-- Central mast is static; keep it above row 7 obstacles but below row 7 items.
+-- Flat mode keeps the base at row 8 but shrinks the art from 5x6 to 4x4.8 tiles.
+local function buildMast()
+    local old = obstacles.mast
+    if old then
+        old.root:Destroy()
+        obstacles.mast = nil
+    end
+
+    local z = 100 + 7 * 100 + 5
+    local mast = makeObstacleRoot(5, 2, z)
     mast.Name = "Mast"
+    local mastWidth = if flatMode then 4 * T else 5 * T
+    local mastHeight = if flatMode then 4.8 * T else 6 * T
+    local mastX = 7.5 * T - mastWidth / 2
+    local mastY = 8 * T - mastHeight
     local sheet = Sprites.SHEETS.mast
-    local image = makeImage(mast, sheet.assetKey, 5 * T, 2 * T, 5 * T, 6 * T)
+    local image = makeImage(mast, sheet.assetKey, mastX, mastY, mastWidth, mastHeight)
     if not image then
         local pole = Instance.new("Frame")
         pole.BackgroundColor3 = Color3.fromRGB(79, 49, 26)
         pole.BorderSizePixel = 0
         pole.AnchorPoint = Vector2.new(0.5, 1)
-        pole.Position = UDim2.fromOffset(7 * T, 8 * T)
-        pole.Size = UDim2.fromOffset(12, 6 * T)
+        pole.Position = UDim2.fromOffset(if flatMode then 7.5 * T else 7 * T, 8 * T)
+        pole.Size = UDim2.fromOffset(12, mastHeight)
         pole.ZIndex = 2
         pole.Parent = mast
 
@@ -216,12 +239,12 @@ local function buildFloor()
         sail.BackgroundColor3 = Color3.fromRGB(34, 27, 41)
         sail.BorderSizePixel = 0
         sail.AnchorPoint = Vector2.new(0.5, 0.5)
-        sail.Position = UDim2.fromOffset(7 * T, 5 * T)
-        sail.Size = UDim2.fromOffset(92, 74)
+        sail.Position = UDim2.fromOffset(if flatMode then 7.5 * T else 7 * T, mastY + mastHeight * 0.5)
+        sail.Size = UDim2.fromOffset(if flatMode then 74 else 92, if flatMode then 60 else 74)
         sail.Font = Enum.Font.GothamBold
         sail.Text = "⚓"
         sail.TextColor3 = Color3.fromRGB(238, 222, 180)
-        sail.TextSize = 54
+        sail.TextSize = if flatMode then 44 else 54
         sail.ZIndex = 3
         sail.Parent = mast
 
@@ -229,7 +252,7 @@ local function buildFloor()
         corner.CornerRadius = UDim.new(0.15, 0)
         corner.Parent = sail
     end
-    setZRecursive(mast, 100 + 7 * 100 + 5)
+    setZRecursive(mast, z)
     obstacles.mast = { kind = "mast", root = mast }
 end
 
@@ -251,7 +274,9 @@ function Board.new(parent: Instance): Frame
     stroke.Parent = board
 
     obstacles = {}
+    lastRows = nil
     buildFloor()
+    buildMast()
     return board
 end
 
@@ -263,6 +288,7 @@ function Board.setGrid(rows)
     if not rows or not board then
         return
     end
+    lastRows = rows
     buildFloor()
 
     local grid = Grid.rowsToGrid(rows)
@@ -302,6 +328,30 @@ function Board.setGrid(rows)
     Board.setSliding({})
 end
 
+-- Switch between the lightweight flat look and the legacy pseudo-3D look.
+-- Collision is unaffected; only sprite geometry is rebuilt.
+function Board.setFlatMode(enabled)
+    local flat = enabled == true
+    if flatMode == flat then
+        return
+    end
+    flatMode = flat
+    if not board then
+        return
+    end
+
+    buildMast()
+    for key, entry in pairs(obstacles) do
+        if key ~= "mast" then
+            entry.root:Destroy()
+            obstacles[key] = nil
+        end
+    end
+    if lastRows then
+        Board.setGrid(lastRows)
+    end
+end
+
 -- Hide static crates at the source/target cells while a crate is sliding; the
 -- Renderer draws the moving crate on top.
 function Board.setSliding(slides)
@@ -321,6 +371,7 @@ function Board.setSliding(slides)
 end
 
 function Board.clear()
+    lastRows = nil
     for key, entry in pairs(obstacles) do
         if key ~= "mast" then
             entry.root:Destroy()
