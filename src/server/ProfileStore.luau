@@ -130,7 +130,9 @@ function ProfileStore:_claim(old: any, requestedLockId: string)
         end
     end
 
-    local data = schema.normalize(old.data)
+    -- The timestamp lets receipt normalization stamp legacy markers and trim
+    -- the bounded purchase history by last-seen time.
+    local data = schema.normalize(old.data, self.now())
     return {
         write = true,
         data = data,

@@ -168,6 +168,166 @@ do
     check("receipts survive normalization", ProfileSchema.hasReceipt(normalized, "old"))
 end
 
+---------------------------------------------------------------- 有界购买历史
+
+local function countKeys(value)
+    local count = 0
+    for _ in pairs(value) do
+        count += 1
+    end
+    return count
+end
+
+do
+    check("receipt history is capped at 1000", ProfileSchema.RECEIPT_LIMIT == 1000)
+
+    local profile = ProfileSchema.newProfile()
+    local granted, reason = ProfileSchema.grantPurchase(
+        profile,
+        "history-1",
+        "needle",
+        2,
+        { now = 1234, price = 25 }
+    )
+    check("a history grant succeeds", granted == true, reason)
+    local record = ProfileSchema.getReceipt(profile, "history-1")
+    check("a receipt record is a table", type(record) == "table")
+    check("the purchase time is stored", record.at == 1234, record.at)
+    check("the last callback time is stored", record.seenAt == 1234, record.seenAt)
+    check("the item is stored", record.item == "needle", record.item)
+    check("the amount is stored", record.amount == 2, record.amount)
+    check("the paid price is stored", record.price == 25, record.price)
+
+    local duplicate, duplicateReason = ProfileSchema.grantPurchase(
+        profile,
+        "history-1",
+        "needle",
+        2,
+        { now = 5678, price = 99 }
+    )
+    check("a history duplicate is rejected as duplicate",
+        duplicate == false and duplicateReason == "duplicate", duplicateReason)
+    record = ProfileSchema.getReceipt(profile, "history-1")
+    check("a duplicate keeps the original purchase time", record.at == 1234, record.at)
+    check("a duplicate refreshes the callback time", record.seenAt == 5678, record.seenAt)
+    check("a duplicate keeps the original paid price", record.price == 25, record.price)
+    check("a duplicate does not add stock", profile.inventory.needle.purchased == 2,
+        profile.inventory.needle.purchased)
+
+    local legacyProfile = ProfileSchema.newProfile()
+    legacyProfile.receipts["legacy"] = true
+    local legacyOk, legacyReason = ProfileSchema.grantPurchase(
+        legacyProfile,
+        "legacy",
+        "remote",
+        1,
+        { now = 777, price = 40 }
+    )
+    check("a legacy marker is treated as a duplicate",
+        legacyOk == false and legacyReason == "duplicate", legacyReason)
+    local legacy = ProfileSchema.getReceipt(legacyProfile, "legacy")
+    check("a legacy marker keeps its unknown purchase time", legacy.at == 0, legacy.at)
+    check("a legacy marker gets the callback time", legacy.seenAt == 777, legacy.seenAt)
+    check("a legacy marker is enriched with item, amount and price",
+        legacy.item == "remote" and legacy.amount == 1 and legacy.price == 40)
+    check("a legacy duplicate does not grant stock",
+        ProfileSchema.totalStock(legacyProfile, "remote") == 0)
+
+    local migrated = ProfileSchema.normalize({
+        receipts = {
+            ["old-marker"] = true,
+            ["timestamp-marker"] = 123,
+            [1] = true,
+            [""] = true,
+        },
+    }, 9000)
+    local oldMarker = migrated.receipts["old-marker"]
+    check("a legacy marker is migrated on load",
+        oldMarker.at == 0 and oldMarker.seenAt == 9000)
+    local timestampMarker = migrated.receipts["timestamp-marker"]
+    check("a numeric marker keeps its timestamp",
+        timestampMarker.at == 123 and timestampMarker.seenAt == 123)
+    check("non-string and empty receipt keys are dropped",
+        migrated.receipts[1] == nil and migrated.receipts[""] == nil)
+
+    local malformed = ProfileSchema.normalize({
+        receipts = {
+            bad = {
+                at = "bad",
+                seenAt = -1,
+                item = "mount",
+                amount = 1.5,
+                price = -3,
+                future = "kept",
+            },
+            good = { at = 10, seenAt = 20, item = "needle", amount = 2, price = 25 },
+        },
+    }, 100)
+    local bad = malformed.receipts.bad
+    check("malformed receipt times fall back to zero",
+        bad.at == 0 and bad.seenAt == 0)
+    check("malformed receipt details are dropped",
+        bad.item == nil and bad.amount == nil and bad.price == nil)
+    check("unknown receipt fields are preserved", bad.future == "kept")
+    local good = malformed.receipts.good
+    check("valid receipt history survives normalization",
+        good.at == 10 and good.seenAt == 20 and good.item == "needle"
+            and good.amount == 2 and good.price == 25)
+
+    local capped = ProfileSchema.newProfile()
+    for index = 1, ProfileSchema.RECEIPT_LIMIT + 5 do
+        capped.receipts[tostring(index)] = {
+            at = index,
+            seenAt = index,
+            item = "needle",
+            amount = 1,
+        }
+    end
+    local trimmed = ProfileSchema.normalize(capped, 99999)
+    check("normalization trims receipts to the limit",
+        countKeys(trimmed.receipts) == ProfileSchema.RECEIPT_LIMIT,
+        countKeys(trimmed.receipts))
+    check("normalization drops the oldest receipts",
+        trimmed.receipts["1"] == nil and trimmed.receipts["5"] == nil
+            and trimmed.receipts["6"] ~= nil
+            and trimmed.receipts[tostring(ProfileSchema.RECEIPT_LIMIT + 5)] ~= nil)
+    check("normalization does not mutate the input receipts",
+        capped.receipts["1"] ~= nil)
+
+    local inserting = ProfileSchema.newProfile()
+    for index = 1, ProfileSchema.RECEIPT_LIMIT do
+        inserting.receipts["old-" .. tostring(index)] = {
+            at = index,
+            seenAt = index,
+            item = "needle",
+            amount = 1,
+        }
+    end
+    local insertOk, insertReason = ProfileSchema.grantPurchase(
+        inserting,
+        "new-purchase",
+        "needle",
+        1,
+        { now = 2000, price = 10 }
+    )
+    check("a purchase at the cap is granted", insertOk == true, insertReason)
+    check("the receipt map stays at the limit",
+        countKeys(inserting.receipts) == ProfileSchema.RECEIPT_LIMIT,
+        countKeys(inserting.receipts))
+    check("the oldest receipt is evicted",
+        inserting.receipts["old-1"] == nil and inserting.receipts["old-2"] ~= nil)
+    check("the new receipt is kept", inserting.receipts["new-purchase"] ~= nil)
+    check("the new purchase is added to stock", inserting.inventory.needle.purchased == 1)
+
+    local invalidPrice = ProfileSchema.newProfile()
+    ProfileSchema.grantPurchase(invalidPrice, "bad-price", "needle", 1, {
+        now = 1,
+        price = 1.5,
+    })
+    check("a fractional price is not stored",
+        ProfileSchema.getReceipt(invalidPrice, "bad-price").price == nil)
+end
+
 ---------------------------------------------------------------- 装备意向的持久化
 
 do

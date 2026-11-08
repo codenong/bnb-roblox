@@ -19,6 +19,12 @@ ProfileSchema.FREE_NEEDLE_DAILY_CAP = 3 -- free needles that can be earned per d
 ProfileSchema.FREE_NEEDLE_STOCK_CAP = 4 -- free needles that can be stored at once
 ProfileSchema.DEFAULT_CHAR = "baobao"
 
+-- Receipts are both the idempotency set and a bounded purchase history. The
+-- newest 1000 entries by last Roblox retry are kept; old receipts are dropped
+-- oldest-first. At roughly 110-130 bytes per entry this is well below the
+-- DataStore 4 MB per-key limit even before compression.
+ProfileSchema.RECEIPT_LIMIT = 1000
+
 local function isFiniteNumber(value: any): boolean
     return type(value) == "number"
         and value == value
@@ -35,6 +41,13 @@ end
 
 local function boundedInt(value: any, fallback: number, maximum: number): number
     return math.min(maximum, nonNegativeInt(value, fallback))
+end
+
+local function optionalNonNegativeInt(value: any): number?
+    if not isFiniteNumber(value) or value < 0 then
+        return nil
+    end
+    return math.floor(value)
 end
 
 local function copy(value: any): any
@@ -111,12 +124,100 @@ local function normalizeBucket(bucket: any): { [any]: any }
     return result
 end
 
+-- Receipt values used to be `true`; they are now records so the same bounded
+-- map doubles as purchase history. A legacy/unknown marker must still count as
+-- seen (idempotency), even when its item, amount or purchase time is unknown.
+local function normalizeReceiptRecord(value: any, now: number): { [any]: any }
+    if type(value) ~= "table" then
+        local stamp = optionalNonNegativeInt(value)
+        if stamp then
+            return { at = stamp, seenAt = stamp }
+        end
+        return { at = 0, seenAt = now }
+    end
+
+    local record = copy(value)
+    local at = optionalNonNegativeInt(record.at)
+    local seenAt = optionalNonNegativeInt(record.seenAt)
+    if at == nil then
+        at = seenAt or 0
+    end
+    if seenAt == nil then
+        seenAt = at
+    end
+    record.at = at
+    record.seenAt = seenAt
+
+    if not ProfileSchema.isItemId(record.item) then
+        record.item = nil
+    end
+    if not isFiniteNumber(record.amount) or record.amount < 1 or record.amount % 1 ~= 0 then
+        record.amount = nil
+    else
+        record.amount = math.floor(record.amount)
+    end
+    if not isFiniteNumber(record.price) or record.price < 0 or record.price % 1 ~= 0 then
+        record.price = nil
+    else
+        record.price = math.floor(record.price)
+    end
+    return record
+end
+
+-- Keep the newest `RECEIPT_LIMIT` entries by last receipt callback. `seenAt`
+-- rather than `at` is intentional: a retried receipt must stay protected from
+-- double-granting even if the purchase itself was older.
+local function trimReceipts(receipts: { [any]: any }): { [any]: any }
+    local count = 0
+    for _ in pairs(receipts) do
+        count += 1
+    end
+    if count <= ProfileSchema.RECEIPT_LIMIT then
+        return receipts
+    end
+
+    local entries = {}
+    for key, record in pairs(receipts) do
+        entries[#entries + 1] = {
+            key = key,
+            seenAt = record.seenAt or 0,
+            at = record.at or 0,
+        }
+    end
+    table.sort(entries, function(a, b)
+        if a.seenAt ~= b.seenAt then
+            return a.seenAt > b.seenAt
+        end
+        if a.at ~= b.at then
+            return a.at > b.at
+        end
+        return a.key < b.key
+    end)
+    for index = ProfileSchema.RECEIPT_LIMIT + 1, #entries do
+        receipts[entries[index].key] = nil
+    end
+    return receipts
+end
+
+local function normalizeReceipts(value: any, now: number): { [any]: any }
+    local result = {}
+    if type(value) == "table" then
+        for key, entry in pairs(value) do
+            if type(key) == "string" and key ~= "" then
+                result[key] = normalizeReceiptRecord(entry, now)
+            end
+        end
+    end
+    return trimReceipts(result)
+end
+
 -- Returns a fresh, normalized profile. The input is never modified. Unknown
 -- fields from the same schema version are kept so a newer server can add data
 -- without this one silently deleting it.
-function ProfileSchema.normalize(value: any): any
+function ProfileSchema.normalize(value: any, now: any): any
     local result = tableOrEmpty(value)
     local defaults = ProfileSchema.newProfile()
+    local stamp = optionalNonNegativeInt(now) or os.time()
 
     result.currency = nonNegativeInt(result.currency, defaults.currency)
 
@@ -148,7 +249,7 @@ function ProfileSchema.normalize(value: any): any
     freeNeedle.day = if type(freeNeedle.day) == "string" then freeNeedle.day else ""
     result.freeNeedle = freeNeedle
 
-    result.receipts = tableOrEmpty(result.receipts)
+    result.receipts = normalizeReceipts(result.receipts, stamp)
 
     -- PlayerService validates the selected character when the profile is seated;
     -- the schema only guards the field's shape. Character colors are pure data,
@@ -227,22 +328,31 @@ function ProfileSchema.totalStock(profile: any, itemId: any): number
     return nonNegativeInt(bucket.free, 0) + nonNegativeInt(bucket.purchased, 0)
 end
 
-function ProfileSchema.hasReceipt(profile: any, purchaseId: any): boolean
+function ProfileSchema.getReceipt(profile: any, purchaseId: any): any
     if type(profile) ~= "table" or type(purchaseId) ~= "string" or purchaseId == "" then
-        return false
+        return nil
     end
     local receipts = profile.receipts
-    return type(receipts) == "table" and receipts[purchaseId] ~= nil
+    if type(receipts) ~= "table" then
+        return nil
+    end
+    return receipts[purchaseId]
 end
 
--- Grants one paid product atomically with its receipt marker. A repeated
--- PurchaseId is a no-op; the caller must still make sure the first grant is
--- durable before telling Roblox the purchase was processed.
+function ProfileSchema.hasReceipt(profile: any, purchaseId: any): boolean
+    return ProfileSchema.getReceipt(profile, purchaseId) ~= nil
+end
+
+-- Grants one paid product atomically with its receipt/history record. A
+-- repeated PurchaseId does not add stock; it refreshes seenAt (and fills any
+-- missing details on a legacy marker). The caller must still make sure the
+-- first grant is durable before telling Roblox the purchase was processed.
 function ProfileSchema.grantPurchase(
     profile: any,
     purchaseId: any,
     itemId: any,
-    amount: any
+    amount: any,
+    opts: any?
 ): (boolean, string?)
     if type(profile) ~= "table" or type(profile.inventory) ~= "table" then
         return false, "invalid_profile"
@@ -256,20 +366,55 @@ function ProfileSchema.grantPurchase(
     if not isFiniteNumber(amount) or amount < 1 or amount % 1 ~= 0 then
         return false, "invalid_amount"
     end
-    if ProfileSchema.hasReceipt(profile, purchaseId) then
-        return false, "duplicate"
+
+    local now = optionalNonNegativeInt(type(opts) == "table" and opts.now or nil) or os.time()
+    local price = nil
+    if type(opts) == "table" and isFiniteNumber(opts.price)
+        and opts.price >= 0 and opts.price % 1 == 0
+    then
+        price = math.floor(opts.price)
     end
 
     local receipts = profile.receipts
+    local existing = if type(receipts) == "table" then receipts[purchaseId] else nil
+    if existing ~= nil then
+        local record = normalizeReceiptRecord(existing, now)
+        record.seenAt = now
+        if record.item == nil then
+            record.item = itemId
+        end
+        if record.amount == nil then
+            record.amount = amount
+        end
+        if record.price == nil and price ~= nil then
+            record.price = price
+        end
+        receipts[purchaseId] = record
+        trimReceipts(receipts)
+        return false, "duplicate"
+    end
+
+    -- Add stock first: if the inventory is unusable there is no marker to roll
+    -- back, and a successful add cannot fail afterwards.
+    if not ProfileSchema.addStock(profile, itemId, "purchased", amount) then
+        return false, "invalid_item"
+    end
+
     if type(receipts) ~= "table" then
         receipts = {}
         profile.receipts = receipts
     end
-    receipts[purchaseId] = true
-    if not ProfileSchema.addStock(profile, itemId, "purchased", amount) then
-        receipts[purchaseId] = nil
-        return false, "invalid_item"
+    local record = {
+        at = now,
+        seenAt = now,
+        item = itemId,
+        amount = math.floor(amount),
+    }
+    if price ~= nil then
+        record.price = price
     end
+    receipts[purchaseId] = record
+    trimReceipts(receipts)
     return true
 end
 

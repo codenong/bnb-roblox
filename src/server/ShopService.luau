@@ -23,6 +23,7 @@ function ShopService.new(opts)
         profiles = opts.profiles,
         store = opts.store,
         flushSeconds = tonumber(opts.flushSeconds) or 10,
+        now = opts.now or os.time,
         logger = opts.logger or function(_message: string)
         end,
         onGranted = opts.onGranted or function(_player)
@@ -47,13 +48,13 @@ end
 -- Live profile path. The profile object is the same table PlayerService and the
 -- match room see, so a successful flush immediately updates stock and the next
 -- round's automatic carry without a reload.
-function ShopService:_grantLoaded(player, purchaseId, itemId, amount)
+function ShopService:_grantLoaded(player, purchaseId, itemId, amount, options)
     local profile = self.profiles:getProfile(player)
     if not profile then
         return nil -- caller falls back to a direct store transaction
     end
 
-    local granted, reason = ProfileSchema.grantPurchase(profile, purchaseId, itemId, amount)
+    local granted, reason = ProfileSchema.grantPurchase(profile, purchaseId, itemId, amount, options)
     if not granted and reason ~= "duplicate" then
         self:_log(string.format(
             "[BnB] receipt %s could not be granted to %s: %s",
@@ -82,7 +83,7 @@ end
 -- Disconnected or not-yet-loaded player path. Acquiring the lock, granting and
 -- releasing in one call also makes a concurrent purchase retry serialize behind
 -- the same per-profile lock rather than double-granting.
-function ShopService:_grantDirect(player, purchaseId, itemId, amount)
+function ShopService:_grantDirect(player, purchaseId, itemId, amount, options)
     if not self.store then
         return false, "no_store"
     end
@@ -98,7 +99,7 @@ function ShopService:_grantDirect(player, purchaseId, itemId, amount)
         return false, "not_loaded"
     end
 
-    local granted, reason = ProfileSchema.grantPurchase(handle.data, purchaseId, itemId, amount)
+    local granted, reason = ProfileSchema.grantPurchase(handle.data, purchaseId, itemId, amount, options)
     if not granted and reason ~= "duplicate" then
         self.store:save(handle, true)
         self:_log(string.format(
@@ -166,11 +167,23 @@ function ShopService:processReceipt(player, receiptInfo): (boolean, string?)
         return false, "unknown_product"
     end
 
-    local ok, reason = self:_grantLoaded(player, purchaseId, itemId, product.amount)
+    -- CurrencySpent is the actual Robux paid for this purchase; it is history
+    -- only and never used for authorization. Developer Products are Robux, so
+    -- no separate currency field is stored.
+    local price = receiptInfo.CurrencySpent
+    if type(price) ~= "number" or price < 0 or price % 1 ~= 0 then
+        price = nil
+    end
+    local options = {
+        now = self.now(),
+        price = price,
+    }
+
+    local ok, reason = self:_grantLoaded(player, purchaseId, itemId, product.amount, options)
     if ok ~= nil then
         return ok, reason
     end
-    return self:_grantDirect(player, purchaseId, itemId, product.amount)
+    return self:_grantDirect(player, purchaseId, itemId, product.amount, options)
 end
 
 return ShopService

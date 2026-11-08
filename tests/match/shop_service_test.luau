@@ -23,11 +23,12 @@ local function copy(value)
     return result
 end
 
-local function receipt(purchaseId, productId, userId)
+local function receipt(purchaseId, productId, userId, price)
     return {
         PurchaseId = purchaseId,
         ProductId = productId,
         PlayerId = userId,
+        CurrencySpent = price,
     }
 end
 
@@ -67,6 +68,7 @@ local function newLoadedEnv()
     local profile = newProfile()
     local env = {
         profile = profile,
+        now = 5000,
         flushOk = true,
         flushReason = nil,
         flushCalls = 0,
@@ -88,6 +90,9 @@ local function newLoadedEnv()
     env.service = ShopService.new({
         profiles = env.profiles,
         flushSeconds = 3,
+        now = function()
+            return env.now
+        end,
         logger = function(_message) end,
         onGranted = function(player)
             env.grantedCalls += 1
@@ -102,6 +107,7 @@ end
 local function newDirectEnv()
     local env = {
         stored = newProfile(),
+        now = 7000,
         loadReason = nil,
         saveFailures = 0,
         loads = 0,
@@ -139,6 +145,9 @@ local function newDirectEnv()
             end,
         },
         store = env.store,
+        now = function()
+            return env.now
+        end,
         logger = function(_message) end,
         onGranted = function()
             env.grantedCalls += 1
@@ -172,32 +181,51 @@ check("a valid receipt is granted", ok == true, reason)
 check("the grant lands in purchased stock", env.profile.inventory.needle.purchased == 1,
     env.profile.inventory.needle.purchased)
 check("the receipt id is stored", ProfileSchema.hasReceipt(env.profile, "r4"))
+local firstRecord = ProfileSchema.getReceipt(env.profile, "r4")
+check("the receipt records the purchase time", firstRecord.at == 5000, firstRecord.at)
+check("the receipt records the last callback time", firstRecord.seenAt == 5000, firstRecord.seenAt)
+check("the receipt records the item", firstRecord.item == "needle", firstRecord.item)
+check("the receipt records the granted amount", firstRecord.amount == 1, firstRecord.amount)
+check("a missing CurrencySpent leaves the price unknown", firstRecord.price == nil, firstRecord.price)
 check("the live profile is flushed", env.flushCalls == 1, env.flushCalls)
 check("the UI is notified after the flush", env.grantedCalls == 1, env.grantedCalls)
 
-ok, reason = env.service:processReceipt(player, receipt("r4", NEEDLE_PRODUCT, 101))
+env.now = 5100
+ok, reason = env.service:processReceipt(player, receipt("r4", NEEDLE_PRODUCT, 101, 25))
 check("a duplicate receipt is acknowledged", ok == true, reason)
 check("a duplicate receipt does not grant again", env.profile.inventory.needle.purchased == 1,
     env.profile.inventory.needle.purchased)
 check("a duplicate receipt is still checked for durability", env.flushCalls == 2, env.flushCalls)
+local refreshed = ProfileSchema.getReceipt(env.profile, "r4")
+check("a duplicate refreshes seenAt", refreshed.seenAt == 5100, refreshed.seenAt)
+check("a duplicate keeps the original purchase time", refreshed.at == 5000, refreshed.at)
+check("a duplicate fills a missing price", refreshed.price == 25, refreshed.price)
+check("a duplicate does not change the granted item", refreshed.item == "needle", refreshed.item)
 
+env.now = 5200
 env.flushOk = false
 env.flushReason = "timeout"
-ok, reason = env.service:processReceipt(player, receipt("r5", REMOTE_PRODUCT, 101))
+ok, reason = env.service:processReceipt(player, receipt("r5", REMOTE_PRODUCT, 101, 30))
 check("a non-durable grant is not acknowledged", ok == false and reason == "not_durable", reason)
 check("the in-memory grant is still present", env.profile.inventory.remote.purchased == 1,
     env.profile.inventory.remote.purchased)
 check("a non-durable grant does not notify the UI", env.grantedCalls == 2, env.grantedCalls)
 local flushesBefore = env.flushCalls
 
+env.now = 5300
 env.flushOk = true
 env.flushReason = nil
-ok, reason = env.service:processReceipt(player, receipt("r5", REMOTE_PRODUCT, 101))
+ok, reason = env.service:processReceipt(player, receipt("r5", REMOTE_PRODUCT, 101, 30))
 check("a retry acknowledges the stored receipt", ok == true, reason)
 check("a retry does not double-grant", env.profile.inventory.remote.purchased == 1,
     env.profile.inventory.remote.purchased)
 check("a retry re-checks durability", env.flushCalls == flushesBefore + 1, env.flushCalls)
 check("a successful retry notifies the UI", env.grantedCalls == 3, env.grantedCalls)
+local retried = ProfileSchema.getReceipt(env.profile, "r5")
+check("a retry keeps the first purchase time", retried.at == 5200, retried.at)
+check("a retry refreshes seenAt", retried.seenAt == 5300, retried.seenAt)
+check("the purchase history keeps the paid price", retried.price == 30, retried.price)
+check("the purchase history keeps the item", retried.item == "remote", retried.item)
 
 env.grantsThrow = true
 ok, reason = env.service:processReceipt(player, receipt("r6", NEEDLE_PRODUCT, 101))
@@ -210,20 +238,30 @@ local direct = newDirectEnv()
 local absent = { UserId = 303, Parent = nil }
 local directOk, directReason = direct.service:processReceipt(
     absent,
-    receipt("direct-1", NEEDLE_PRODUCT, 303)
+    receipt("direct-1", NEEDLE_PRODUCT, 303, 40)
 )
 check("a receipt for a disconnected player succeeds", directOk == true, directReason)
 check("the direct path writes purchased stock", direct.stored.inventory.needle.purchased == 1,
     direct.stored.inventory.needle.purchased)
 check("the direct path releases its lock", direct.saves[#direct.saves].release == true)
 check("the direct path never notifies a missing player", direct.grantedCalls == 0)
+local directRecord = direct.stored.receipts["direct-1"]
+check("the direct path writes purchase history", directRecord.at == 7000
+    and directRecord.seenAt == 7000 and directRecord.item == "needle"
+    and directRecord.amount == 1 and directRecord.price == 40, directRecord.at)
 
-direct.service:processReceipt(absent, receipt("direct-1", NEEDLE_PRODUCT, 303))
+direct.now = 7100
+direct.service:processReceipt(absent, receipt("direct-1", NEEDLE_PRODUCT, 303, 45))
 check("a direct duplicate is acknowledged without a second grant",
     direct.stored.inventory.needle.purchased == 1,
     direct.stored.inventory.needle.purchased)
 check("a direct duplicate still releases the lock it acquired",
     #direct.saves == 2 and direct.saves[2].release == true, #direct.saves)
+check("a direct duplicate refreshes seenAt and keeps the paid price",
+    direct.stored.receipts["direct-1"].seenAt == 7100
+        and direct.stored.receipts["direct-1"].at == 7000
+        and direct.stored.receipts["direct-1"].price == 40,
+    direct.stored.receipts["direct-1"].seenAt)
 
 local savesBeforeLocked = #direct.saves
 direct.loadReason = "locked"
@@ -266,6 +304,7 @@ do
 
     local profile = newProfile()
     local flushes = 0
+    local now = 8000
     local service = ShopService.new({
         profiles = {
             getProfile = function()
@@ -276,18 +315,30 @@ do
                 return true
             end,
         },
+        now = function()
+            return now
+        end,
     })
 
     local player = instancePlayer(4242)
     check("the test player really is userdata, like a Roblox Instance", type(player) == "userdata")
 
-    local ok, reason = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242))
+    local ok, reason = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242, 50))
     check("an online Instance player's receipt is granted", ok == true, reason)
     check("the purchase reached the stock", profile.inventory.needle.purchased == 1, profile.inventory.needle.purchased)
     check("it was flushed before acknowledging", flushes == 1, flushes)
+    local instanceRecord = profile.receipts["instance-1"]
+    check("an online purchase writes history with its price",
+        instanceRecord.at == 8000 and instanceRecord.seenAt == 8000
+            and instanceRecord.price == 50, instanceRecord.at)
 
-    local again = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242))
+    now = 8100
+    local again = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242, 50))
     check("a repeated receipt is acknowledged without a second grant", again == true and profile.inventory.needle.purchased == 1)
+    check("a repeated online receipt refreshes seenAt",
+        profile.receipts["instance-1"].seenAt == 8100
+            and profile.receipts["instance-1"].at == 8000,
+        profile.receipts["instance-1"].seenAt)
 
     local mismatch, why = service:processReceipt(player, receipt("instance-2", NEEDLE_PRODUCT, 9999))
     check("a receipt for another user is still refused", mismatch == false and why == "player_mismatch", why)

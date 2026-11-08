@@ -237,4 +237,45 @@ do
     reload:save(b2, true)
 end
 
+---------------------------------------------------------------- 载入时裁剪购买历史
+
+do
+    local fake = FakeDataStore.new()
+    local data = ProfileSchema.newProfile()
+    for index = 1, ProfileSchema.RECEIPT_LIMIT + 5 do
+        data.receipts["r" .. tostring(index)] = {
+            at = index,
+            seenAt = index,
+            item = "needle",
+            amount = 1,
+        }
+    end
+    data.receipts.legacy = true
+    fake.values[key(12)] = {
+        version = ProfileSchema.VERSION,
+        data = data,
+        lock = nil,
+    }
+
+    now = 4000
+    local store = newStore(fake, "trim-history")
+    local handle, reason = store:load(12)
+    check("a profile with an oversized receipt map loads", handle ~= nil, reason)
+
+    local count = 0
+    for _ in pairs(handle.data.receipts) do
+        count += 1
+    end
+    check("loading trims purchase history to the limit",
+        count == ProfileSchema.RECEIPT_LIMIT, count)
+    check("loading evicts the oldest receipts",
+        handle.data.receipts["r1"] == nil and handle.data.receipts["r6"] == nil
+            and handle.data.receipts["r7"] ~= nil)
+    check("loading migrates a legacy marker with the store clock",
+        handle.data.receipts.legacy.at == 0
+            and handle.data.receipts.legacy.seenAt == now,
+        handle.data.receipts.legacy.seenAt)
+    store:save(handle, true)
+end
+
 TestLib.finish()
