@@ -135,9 +135,13 @@ mkdir -p "$INPUT_BUILD"
 {
   printf 'local __env = require("./ClientEnv")\n'
   printf 'local game, Instance, Enum, warn = __env.game, __env.Instance, __env.Enum, print\n'
+  printf 'local UDim, UDim2 = __env.UDim, __env.UDim2\n'
+  printf 'local Vector2, Vector3, Color3 = __env.Vector2, __env.Vector3, __env.Color3\n'
   cat ../src/client/Input.luau
 } > "$INPUT_BUILD/Input.luau"
-cp client/ClientEnv.luau client/input_test.luau testlib.luau "$INPUT_BUILD/"
+cp client/ClientEnv.luau client/input_test.luau client/input_touch_test.luau testlib.luau "$INPUT_BUILD/"
 
 echo "== input_test.luau (keyboard / arrows / gamepad mapping)"
 "$LUAU" "$INPUT_BUILD/input_test.luau"
+echo "== input_touch_test.luau (fixed four-way touch joystick)"
+"$LUAU" "$INPUT_BUILD/input_touch_test.luau"

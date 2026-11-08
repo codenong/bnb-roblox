@@ -1,6 +1,7 @@
 -- src/client/Input.luau
--- Keyboard, gamepad and touch input. Direction order is oldest press first,
--- newest press last; Game treats the last entry as the most recent direction.
+-- Keyboard, gamepad and touch joystick input. Direction order is oldest press
+-- first, newest press last; Game treats the last entry as the most recent
+-- direction.
 
 local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
@@ -47,6 +48,16 @@ local USE_KEYS = {
 local sources = {}
 local sequence = 0
 
+-- The touch joystick owns one source. Keeping it separate from keyboard and
+-- gamepad sources means releasing it never clears a direction still held on
+-- another input device.
+local TOUCH_STICK_SOURCE = "touch_stick"
+local joystickBase = nil
+local joystickKnob = nil
+local joystickTouch = nil
+local joystickDirection = nil
+local joystickTravel = 54
+
 local function setSource(source: string, direction: string?)
     if direction then
         sequence += 1
@@ -58,6 +69,16 @@ end
 
 local function clearSources()
     sources = {}
+end
+
+local function resetJoystick()
+    joystickTouch = nil
+    joystickDirection = nil
+    setSource(TOUCH_STICK_SOURCE, nil)
+    if joystickKnob then
+        joystickKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+        joystickKnob.BackgroundTransparency = 0.18
+    end
 end
 
 function Input.getDirs(): { string }
@@ -101,6 +122,7 @@ function Input.setEnabled(value: boolean)
     setGuiNavigation(not value)
     if not enabled then
         clearSources()
+        resetJoystick()
     end
 end
 
@@ -108,25 +130,35 @@ function Input.setControlsVisible(visible: boolean)
     if controls then
         controls.Visible = visible
     end
+    if not visible then
+        resetJoystick()
+    end
 end
 
-local function stickDirection(position: Vector3): string?
-    local x = position.X
-    local y = -position.Y
+local STICK_THRESHOLD = 0.35
+
+-- x is right-positive and y is up-positive. The game is strictly four-way, so
+-- the dominant axis wins; equal diagonals deterministically pick horizontal.
+local function directionFromAxes(x: number, y: number): string?
     if math.abs(x) >= math.abs(y) then
-        if x > 0.35 then
+        if x > STICK_THRESHOLD then
             return "right"
-        elseif x < -0.35 then
+        elseif x < -STICK_THRESHOLD then
             return "left"
         end
     else
-        if y > 0.35 then
-            return "down"
-        elseif y < -0.35 then
+        if y > STICK_THRESHOLD then
             return "up"
+        elseif y < -STICK_THRESHOLD then
+            return "down"
         end
     end
     return nil
+end
+
+local function stickDirection(position: Vector3): string?
+    -- Roblox reports Thumbstick1 with +Y up, which already matches our axes.
+    return directionFromAxes(position.X, position.Y)
 end
 
 ---------------------------------------------------------------- 方向键
@@ -178,7 +210,37 @@ local function claimArrowKeys()
     end
 end
 
----------------------------------------------------------------- 触屏按键
+---------------------------------------------------------------- 触屏摇杆
+
+local function updateJoystick(position: Vector3)
+    if not joystickBase then
+        return
+    end
+
+    local centerX = joystickBase.AbsolutePosition.X + joystickBase.AbsoluteSize.X / 2
+    local centerY = joystickBase.AbsolutePosition.Y + joystickBase.AbsoluteSize.Y / 2
+    local dx = position.X - centerX
+    local dy = position.Y - centerY
+    local distance = math.sqrt(dx * dx + dy * dy)
+    local travel = math.max(joystickTravel, 1)
+    if distance > travel then
+        local scale = travel / distance
+        dx *= scale
+        dy *= scale
+    end
+
+    if joystickKnob then
+        joystickKnob.Position = UDim2.new(0.5, dx, 0.5, dy)
+        joystickKnob.BackgroundTransparency = 0.04
+    end
+
+    -- Screen Y grows downward; directionFromAxes expects up-positive Y.
+    local direction = directionFromAxes(dx / travel, -dy / travel)
+    if direction ~= joystickDirection then
+        joystickDirection = direction
+        setSource(TOUCH_STICK_SOURCE, direction)
+    end
+end
 
 local function makeButton(parent: Instance, text: string, size: number, position: UDim2): TextButton
     local button = Instance.new("TextButton")
@@ -210,27 +272,6 @@ local function makeButton(parent: Instance, text: string, size: number, position
     return button
 end
 
-local function bindTouchHold(button: TextButton, direction: string)
-    local sourceName = "touch_" .. button.Name .. "_" .. tostring(button)
-    button.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            if enabled then
-                setSource(sourceName, direction)
-            end
-        end
-    end)
-    button.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            setSource(sourceName, nil)
-        end
-    end)
-    button.MouseLeave:Connect(function()
-        setSource(sourceName, nil)
-    end)
-end
-
 local function createTouchControls(gui: ScreenGui)
     local frame = Instance.new("Frame")
     frame.Name = "TouchControls"
@@ -241,26 +282,83 @@ local function createTouchControls(gui: ScreenGui)
     frame.Parent = gui
     controls = frame
 
-    local padSize = 190
-    local dx, dy = 24 + padSize / 2, -24 - padSize / 2
-    local pad = Instance.new("Frame")
-    pad.Name = "DPad"
-    pad.AnchorPoint = Vector2.new(0, 1)
-    pad.Position = UDim2.new(0, dx - padSize / 2, 1, dy + padSize / 2)
-    pad.Size = UDim2.fromOffset(padSize, padSize)
-    pad.BackgroundTransparency = 1
-    pad.ZIndex = 50001
-    pad.Parent = frame
+    local baseSize = 180
+    local knobSize = 64
+    local margin = 24
 
-    local buttonSize = 58
-    local up = makeButton(pad, "▲", buttonSize, UDim2.fromOffset(padSize / 2, 29))
-    local down = makeButton(pad, "▼", buttonSize, UDim2.fromOffset(padSize / 2, padSize - 29))
-    local left = makeButton(pad, "◀", buttonSize, UDim2.fromOffset(29, padSize / 2))
-    local right = makeButton(pad, "▶", buttonSize, UDim2.fromOffset(padSize - 29, padSize / 2))
-    bindTouchHold(up, "up")
-    bindTouchHold(down, "down")
-    bindTouchHold(left, "left")
-    bindTouchHold(right, "right")
+    local base = Instance.new("Frame")
+    base.Name = "Joystick"
+    base.AnchorPoint = Vector2.new(0.5, 1)
+    base.Position = UDim2.new(0, margin + baseSize / 2, 1, -margin)
+    base.Size = UDim2.fromOffset(baseSize, baseSize)
+    base.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    base.BackgroundTransparency = 0.82
+    base.BorderSizePixel = 0
+    base.ZIndex = 50001
+    base.Parent = frame
+    joystickBase = base
+
+    local baseCorner = Instance.new("UICorner")
+    baseCorner.CornerRadius = UDim.new(0.5, 0)
+    baseCorner.Parent = base
+
+    local baseStroke = Instance.new("UIStroke")
+    baseStroke.Color = Color3.fromRGB(255, 255, 255)
+    baseStroke.Transparency = 0.55
+    baseStroke.Thickness = 1.5
+    baseStroke.Parent = base
+
+    local knob = Instance.new("Frame")
+    knob.Name = "JoystickKnob"
+    knob.AnchorPoint = Vector2.new(0.5, 0.5)
+    knob.Position = UDim2.new(0.5, 0, 0.5, 0)
+    knob.Size = UDim2.fromOffset(knobSize, knobSize)
+    knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    knob.BackgroundTransparency = 0.18
+    knob.BorderSizePixel = 0
+    knob.ZIndex = 50003
+    knob.Parent = base
+    joystickKnob = knob
+
+    local knobCorner = Instance.new("UICorner")
+    knobCorner.CornerRadius = UDim.new(0.5, 0)
+    knobCorner.Parent = knob
+
+    local knobStroke = Instance.new("UIStroke")
+    knobStroke.Color = Color3.fromRGB(255, 255, 255)
+    knobStroke.Transparency = 0.25
+    knobStroke.Thickness = 1.5
+    knobStroke.Parent = knob
+
+    -- The knob and base are visuals only. This transparent button sits above
+    -- them and owns the touch, so pressing the knob itself starts the stick.
+    local surface = Instance.new("TextButton")
+    surface.Name = "JoystickSurface"
+    surface.Text = ""
+    surface.TextTransparency = 1
+    surface.BackgroundTransparency = 1
+    surface.BorderSizePixel = 0
+    surface.AutoButtonColor = false
+    surface.Selectable = false
+    surface.Size = UDim2.fromScale(1, 1)
+    surface.ZIndex = 50004
+    surface.Parent = base
+
+    joystickTravel = baseSize / 2 - knobSize / 2 - 4
+
+    -- Only the initial press comes from the GUI. Drag and release are tracked
+    -- through UserInputService for this exact InputObject, so the stick keeps
+    -- moving even when the finger leaves the base or goes past its edge.
+    surface.InputBegan:Connect(function(input)
+        if not enabled or joystickTouch ~= nil then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            joystickTouch = input
+            updateJoystick(input.Position)
+        end
+    end)
 
     local bubble = makeButton(frame, "泡泡", 88, UDim2.new(1, -82, 1, -86))
     bubble.BackgroundColor3 = Color3.fromRGB(120, 200, 255)
@@ -313,6 +411,9 @@ function Input.init(gui: ScreenGui)
     end)
 
     UserInputService.InputEnded:Connect(function(input)
+        if input == joystickTouch then
+            resetJoystick()
+        end
         local direction = MOVE_KEYS[input.KeyCode]
         if direction then
             setSource("key_" .. input.KeyCode.Name, nil)
@@ -320,6 +421,14 @@ function Input.init(gui: ScreenGui)
     end)
 
     UserInputService.InputChanged:Connect(function(input)
+        if joystickTouch
+            and (input == joystickTouch
+                or (joystickTouch.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseMovement))
+        then
+            updateJoystick(input.Position)
+        end
+
         if input.KeyCode == Enum.KeyCode.Thumbstick1 then
             if enabled then
                 local direction = stickDirection(input.Position)
@@ -337,6 +446,7 @@ function Input.init(gui: ScreenGui)
 
     UserInputService.WindowFocusReleased:Connect(function()
         clearSources()
+        resetJoystick()
     end)
 
     if UserInputService.TouchEnabled then

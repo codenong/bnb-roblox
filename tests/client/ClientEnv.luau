@@ -10,13 +10,82 @@ local Env = {
     loadingTimedOut = false,
 }
 
--- Property sets are stored; any method call is a harmless no-op.
-local function newInstance()
-    return setmetatable({}, {
-        __index = function()
+Env.Vector2 = {
+    new = function(x, y)
+        return { X = x or 0, Y = y or 0 }
+    end,
+}
+Env.Vector3 = {
+    new = function(x, y, z)
+        return { X = x or 0, Y = y or 0, Z = z or 0 }
+    end,
+}
+Env.UDim = {
+    new = function(scale, offset)
+        return { Scale = scale or 0, Offset = offset or 0 }
+    end,
+}
+Env.UDim2 = {
+    new = function(xScale, xOffset, yScale, yOffset)
+        return {
+            X = { Scale = xScale or 0, Offset = xOffset or 0 },
+            Y = { Scale = yScale or 0, Offset = yOffset or 0 },
+        }
+    end,
+    fromOffset = function(x, y)
+        return { X = { Scale = 0, Offset = x or 0 }, Y = { Scale = 0, Offset = y or 0 } }
+    end,
+    fromScale = function(x, y)
+        return { X = { Scale = x or 0, Offset = 0 }, Y = { Scale = y or 0, Offset = 0 } }
+    end,
+}
+Env.Color3 = {
+    fromRGB = function(r, g, b)
+        return { R = r or 0, G = g or 0, B = b or 0 }
+    end,
+}
+
+-- Instances record their property assignments on the table. GUI signals are
+-- created lazily so a test can call button.InputBegan:Fire(input).
+Env.instances = {}
+local GUI_EVENTS = {
+    Activated = true,
+    InputBegan = true,
+    InputChanged = true,
+    InputEnded = true,
+    MouseLeave = true,
+}
+local function newGuiSignal()
+    local handlers = {}
+    return {
+        Connect = function(_, fn)
+            table.insert(handlers, fn)
+        end,
+        Fire = function(_, ...)
+            for _, fn in ipairs(handlers) do
+                fn(...)
+            end
+        end,
+    }
+end
+local function newInstance(className)
+    local instance = { ClassName = className }
+    local events = {}
+    setmetatable(instance, {
+        __index = function(_, key)
+            if GUI_EVENTS[key] then
+                local event = events[key]
+                if not event then
+                    event = newGuiSignal()
+                    events[key] = event
+                end
+                return event
+            end
             return function() end
         end,
     })
+    table.insert(Env.instances, instance)
+    return instance
 end
 
 -- BindableEvent that counts how often it was fired (Input.placePressed etc.).
@@ -35,7 +104,7 @@ Env.Instance = {
         if className == "BindableEvent" then
             return newBindable()
         end
-        return newInstance()
+        return newInstance(className)
     end,
 }
 
