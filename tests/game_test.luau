@@ -674,4 +674,35 @@ do
     check("an unknown player has no usage", game:getItemUsage("nobody") == nil)
 end
 
+---------------------------------------------------------------- 玩家颜色与出生位置
+
+do
+    local game = Game.new({
+        { id = "a", name = "A", colorIndex = 5 },
+        { id = "b", name = "B", colorIndex = 5 },
+        { id = "c", name = "C", colorIndex = 7 },
+        { id = "d", name = "D" },
+    }, {
+        random = function()
+            return 0.99
+        end,
+        warmup = 0,
+    })
+    check("explicit color is used", game.players.a.colorIndex == 5, game.players.a.colorIndex)
+    check("duplicate colors are allowed", game.players.b.colorIndex == 5, game.players.b.colorIndex)
+    check("out-of-range color falls back to the seat",
+        game.players.c.colorIndex == 2, game.players.c.colorIndex)
+    check("missing color falls back to the seat",
+        game.players.d.colorIndex == 3, game.players.d.colorIndex)
+    for i, id in ipairs({ "a", "b", "c", "d" }) do
+        local player = game.players[id]
+        local spawn = Map.SPAWNS[i]
+        check("spawn " .. id .. " follows seat order",
+            player.x == spawn[1] * TILE + TILE / 2
+                and player.y == spawn[2] * TILE + TILE / 2)
+        check("color " .. id .. " is in range",
+            player.colorIndex >= 0 and player.colorIndex < Characters.COLOR_COUNT)
+    end
+end
+
 TestLib.finish()

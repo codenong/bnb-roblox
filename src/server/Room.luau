@@ -40,6 +40,10 @@ local VALID_DIRS = {
     right = true,
 }
 
+local function recordColorIndex(record)
+    return Characters.colorIndex(Characters.colorOf(record.charColors, record.char)) or 0
+end
+
 local function buildRoster(defs)
     local result = {}
     for i, def in ipairs(defs) do
@@ -48,7 +52,7 @@ local function buildRoster(defs)
             name = def.name,
             isBot = def.isBot == true,
             char = Characters.getChar(def.char).id,
-            colorIndex = i - 1,
+            colorIndex = Characters.sanitizeColorIndex(def.colorIndex, i - 1),
             items = if type(def.carry) == "table" then table.clone(def.carry) else nil,
         }
     end
@@ -338,7 +342,7 @@ function Room:_refreshWaitingRoster()
             name = record.name,
             isBot = false,
             char = record.char,
-            colorIndex = i - 1,
+            colorIndex = recordColorIndex(record),
             -- Visible to everyone in the room, including spectators. This is the
             -- automatic carry for this room's mode: versus caps stock at the
             -- entry limit, practice carries nothing.
@@ -361,6 +365,9 @@ function Room:refreshInventory(): boolean
 end
 
 function Room:_buildState(record)
+    local selectedChar = if record then record.char else Characters.DEFAULT_CHAR
+    local charColors = Characters.normalizeColors(if record then record.charColors else nil)
+    local selectedColor = Characters.colorOf(charColors, selectedChar)
     local state = {
         phase = self.phase,
         roundId = self.roundId,
@@ -372,7 +379,9 @@ function Room:_buildState(record)
         grid = if self.game then self.game:gridRows() else Grid.gridToRows(Map.buildMap()),
         spawns = Map.SPAWNS,
         tile = Constants.TILE,
-        selectedChar = if record then record.char else Characters.DEFAULT_CHAR,
+        selectedChar = selectedChar,
+        selectedColor = selectedColor,
+        charColors = charColors,
         inventory = if record then Shop.inventorySummary(record.profile, self.mode) else nil,
         spectating = true,
         charLocked = self:isCharLocked(),
@@ -627,6 +636,7 @@ function Room:_startRound()
     local participants = {}
     local defs = {}
     local usedNames = {}
+    local usedColors = {}
 
     for _, record in ipairs(self.seats) do
         if #participants >= self.maxPlayers then
@@ -634,11 +644,14 @@ function Room:_startRound()
         end
         table.insert(participants, record)
         usedNames[record.name] = true
+        local colorIndex = recordColorIndex(record)
+        usedColors[colorIndex] = true
         table.insert(defs, {
             id = record.id,
             name = record.name,
             isBot = false,
             char = record.char,
+            colorIndex = colorIndex,
             carry = Shop.effectiveCarry(record.profile, self.mode),
         })
     end
@@ -653,11 +666,23 @@ function Room:_startRound()
     local botCount = if self.fillBots then self.maxPlayers - #defs else 0
     for i = 1, botCount do
         local character = Characters.CHARACTERS[self.random:NextInteger(1, #Characters.CHARACTERS)]
+        local colorIndex = nil
+        for candidate = 0, Characters.COLOR_COUNT - 1 do
+            if not usedColors[candidate] then
+                colorIndex = candidate
+                break
+            end
+        end
+        if colorIndex == nil then
+            colorIndex = (i - 1) % Characters.COLOR_COUNT
+        end
+        usedColors[colorIndex] = true
         table.insert(defs, {
             id = "bot" .. i,
             name = randomBotName(self.random, usedNames),
             isBot = true,
             char = character.id,
+            colorIndex = colorIndex,
         })
     end
 
@@ -1027,6 +1052,21 @@ function Room:selectChar(record, charId: string): boolean
         return false
     end
     if not PlayerService.setChar(record.player, charId) then
+        return false
+    end
+    self:_refreshWaitingRoster()
+    self:broadcastState()
+    return true
+end
+
+function Room:selectColor(record, colorKey: string): boolean
+    if self.phase ~= "waiting" or not record or not self.memberById[record.id] then
+        return false
+    end
+    if self:isCharLocked() then
+        return false
+    end
+    if not PlayerService.setColor(record.player, colorKey) then
         return false
     end
     self:_refreshWaitingRoster()

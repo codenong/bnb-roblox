@@ -5,9 +5,11 @@
 -- All prepared image sizes are <=1024 so Roblox does not resample them and
 -- ImageRectOffset slicing stays pixel-exact.
 
+local Characters = require(script.Parent.Characters)
+
 local Sprites = {}
 
-Sprites.TEAM_KEYS = { "red", "blue", "green", "yellow", "purple", "orange" }
+Sprites.TEAM_KEYS = Characters.COLOR_KEYS
 
 Sprites.SHEETS = {
     floor_checker = { assetKey = "img_floor_checker", width = 320, height = 320, cols = 1, rows = 1 },
@@ -194,9 +196,9 @@ Sprites.POPO = {
     remote = { assetKeys = { "img_popo_r0", "img_popo_r1", "img_popo_r2" }, frames = 3 },
 }
 
--- colorIndex is 0-based (Game assigns i-1), matching BnB teamColors.
+-- colorIndex is 0-based (Game assigns i-1 or the player's chosen color).
 function Sprites.teamKey(colorIndex: number): string
-    return Sprites.TEAM_KEYS[(colorIndex % #Sprites.TEAM_KEYS) + 1]
+    return Characters.colorKey(colorIndex)
 end
 
 function Sprites.animKey(char: string, colorIndex: number): string

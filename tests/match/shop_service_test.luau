@@ -253,4 +253,48 @@ directOk, directReason = direct.service:processReceipt(
 check("a direct retry grants exactly once", directOk == true
     and direct.stored.inventory.remote.purchased == 1, directReason)
 
+---------------------------------------------------------------- 在线玩家是 Roblox Instance（type() 为 "userdata"）
+
+-- Regression: a connected player is an Instance, not a plain table. The receipt
+-- must still be granted; only an offline buyer is represented by a table.
+do
+    local function instancePlayer(userId)
+        local proxy = newproxy(true)
+        getmetatable(proxy).__index = { UserId = userId, Parent = {} }
+        return proxy
+    end
+
+    local profile = newProfile()
+    local flushes = 0
+    local service = ShopService.new({
+        profiles = {
+            getProfile = function()
+                return profile
+            end,
+            flush = function()
+                flushes += 1
+                return true
+            end,
+        },
+    })
+
+    local player = instancePlayer(4242)
+    check("the test player really is userdata, like a Roblox Instance", type(player) == "userdata")
+
+    local ok, reason = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242))
+    check("an online Instance player's receipt is granted", ok == true, reason)
+    check("the purchase reached the stock", profile.inventory.needle.purchased == 1, profile.inventory.needle.purchased)
+    check("it was flushed before acknowledging", flushes == 1, flushes)
+
+    local again = service:processReceipt(player, receipt("instance-1", NEEDLE_PRODUCT, 4242))
+    check("a repeated receipt is acknowledged without a second grant", again == true and profile.inventory.needle.purchased == 1)
+
+    local mismatch, why = service:processReceipt(player, receipt("instance-2", NEEDLE_PRODUCT, 9999))
+    check("a receipt for another user is still refused", mismatch == false and why == "player_mismatch", why)
+
+    check("nil is not a player", select(1, service:processReceipt(nil, receipt("x", NEEDLE_PRODUCT, 1))) == false)
+    check("a number is not a player", select(1, service:processReceipt(5, receipt("y", NEEDLE_PRODUCT, 1))) == false)
+    check("a table without UserId is not a player", select(1, service:processReceipt({}, receipt("z", NEEDLE_PRODUCT, 1))) == false)
+end
+
 TestLib.finish()

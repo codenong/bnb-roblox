@@ -13,6 +13,7 @@ local sequence = 0
 
 local function makeRecord(player: Player, profile: any?)
     local char = Characters.DEFAULT_CHAR
+    local charColors = Characters.defaultColors()
     if type(profile) == "table" then
         local settings = profile.settings
         if type(settings) ~= "table" then
@@ -24,6 +25,10 @@ local function makeRecord(player: Player, profile: any?)
         else
             settings.char = Characters.DEFAULT_CHAR
         end
+        -- Keep the record and the saved profile on separate tables. Mutating the
+        -- record's in-memory view must not bypass future persistence hooks.
+        charColors = Characters.normalizeColors(settings.charColors)
+        settings.charColors = Characters.normalizeColors(charColors)
     end
 
     sequence += 1
@@ -32,6 +37,7 @@ local function makeRecord(player: Player, profile: any?)
         id = "u" .. tostring(player.UserId),
         name = player.DisplayName,
         char = char,
+        charColors = charColors,
         order = sequence,
         profile = profile,
     }
@@ -101,6 +107,26 @@ function PlayerService.setChar(player: Player, charId: any): boolean
             record.profile.settings = settings
         end
         settings.char = charId
+    end
+    return true
+end
+
+-- Colors are stored per character, so switching characters restores that
+-- character's last choice instead of overwriting a single global color.
+function PlayerService.setColor(player: Player, colorKey: any): boolean
+    local record = records[player]
+    if not record or not Characters.isValidColor(colorKey) then
+        return false
+    end
+    record.charColors = Characters.normalizeColors(record.charColors)
+    record.charColors[record.char] = colorKey
+    if type(record.profile) == "table" then
+        local settings = record.profile.settings
+        if type(settings) ~= "table" then
+            settings = {}
+            record.profile.settings = settings
+        end
+        settings.charColors = Characters.normalizeColors(record.charColors)
     end
     return true
 end

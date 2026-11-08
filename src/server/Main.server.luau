@@ -192,6 +192,12 @@ Net.get("SelectChar").OnServerEvent:Connect(function(player, charId)
     MatchService.selectChar(player, charId)
 end)
 
+Net.get("SelectColor").OnServerEvent:Connect(function(player, colorKey)
+    if type(colorKey) == "string" then
+        MatchService.selectColor(player, colorKey)
+    end
+end)
+
 -- "换桌" is a real seat exit, decided by the server. The old room cancels its
 -- countdown/settles as usual; the player remains roomless until choosing a mode.
 Net.get("LeaveTable").OnServerInvoke = function(player)

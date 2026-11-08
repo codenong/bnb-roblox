@@ -4,6 +4,8 @@
 local TestLib = require("./testlib")
 local check = TestLib.check
 
+local Constants = require("./Constants")
+local Map = require("./Map")
 local Room = require("./Room")
 local PlayerService = require("./PlayerService")
 local Net = require("./Net")
@@ -155,7 +157,6 @@ check("N-player room cleans up", roomN:isEmpty())
 ---------------------------------------------------------------- 选角在倒计时最后几秒锁定
 
 do
-    local Constants = require("./Constants")
     local erin = addRecord("Erin")
     local frank = addRecord("Frank")
 
@@ -354,6 +355,167 @@ do
 
     PlayerService.remove(player)
     PlayerService.remove(invalidPlayer)
+end
+
+---------------------------------------------------------------- 角色颜色选择、持久化与开局颜色
+
+do
+    local profile = {
+        settings = {
+            char = "baobao",
+            charColors = { baobao = "green", haidao = "orange" },
+        },
+    }
+    local player = { UserId = 9910, DisplayName = "Nora" }
+    local record = PlayerService.add(player, profile)
+    check("profile colors are restored", record.charColors.baobao == "green"
+        and record.charColors.haidao == "orange")
+    check("record colors do not alias the profile map", record.charColors ~= profile.settings.charColors)
+    record.charColors.baobao = "red"
+    check("mutating the record does not mutate the profile",
+        profile.settings.charColors.baobao == "green")
+
+    check("setColor restores the record", PlayerService.setColor(player, "green") == true)
+    check("setColor writes the profile", profile.settings.charColors.baobao == "green")
+    check("setColor leaves the other character alone", profile.settings.charColors.haidao == "orange")
+    check("setColor rejects invalid colors", PlayerService.setColor(player, "pink") == false)
+    check("a rejected setColor changes nothing", record.charColors.baobao == "green")
+
+    local room = Room.new({
+        id = 110,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 1000,
+        resultsTicks = 4,
+    })
+    room:addMember(record)
+    local state = room:getSync(record)
+    check("waiting state exposes the current color", state.selectedColor == "green", state.selectedColor)
+    check("waiting state exposes the per-character map",
+        state.charColors.baobao == "green" and state.charColors.haidao == "orange")
+    check("roster uses the current character color", state.roster[1].colorIndex == 2,
+        state.roster[1].colorIndex)
+
+    Net.reset()
+    check("color selection succeeds while waiting", room:selectColor(record, "yellow") == true)
+    check("color selection updates the record", record.charColors.baobao == "yellow")
+    check("color selection updates the profile", profile.settings.charColors.baobao == "yellow")
+    check("color selection updates the roster", room:getSync(record).roster[1].colorIndex == 3,
+        room:getSync(record).roster[1].colorIndex)
+    check("color selection broadcasts", Net.sentCount(player, "RoundState") >= 1,
+        Net.sentCount(player, "RoundState"))
+
+    check("switching characters restores that character's color",
+        room:selectChar(record, "haidao") == true and room:getSync(record).selectedColor == "orange")
+    check("the switched roster follows the selected character",
+        room:getSync(record).roster[1].colorIndex == 5, room:getSync(record).roster[1].colorIndex)
+    check("changing the second character does not change the first",
+        room:selectColor(record, "red") == true
+            and record.charColors.baobao == "yellow" and record.charColors.haidao == "red")
+    check("switching back restores the first character's color",
+        room:selectChar(record, "baobao") == true and room:getSync(record).selectedColor == "yellow")
+
+    Net.reset()
+    check("an invalid color is rejected", room:selectColor(record, "pink") == false)
+    check("a rejected color changes nothing", room:getSync(record).selectedColor == "yellow")
+    check("a rejected color does not broadcast",
+        Net.sentCount(player, "RoundState") == 0, Net.sentCount(player, "RoundState"))
+
+    -- The same lock window as character selection.
+    local lockRoom = Room.new({
+        id = 111,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 100,
+        charLockTicks = 30,
+    })
+    local lockPlayer = addRecord("Olga")
+    lockRoom:addMember(lockPlayer)
+    for _ = 1, 70 do
+        lockRoom:step()
+    end
+    check("color is locked with the character", lockRoom:isCharLocked() == true)
+    check("color selection is rejected while locked", lockRoom:selectColor(lockPlayer, "purple") == false)
+    check("a locked color changes nothing", lockPlayer.charColors.baobao == "red")
+    check("character selection is still rejected by the same lock",
+        lockRoom:selectChar(lockPlayer, "haidao") == false)
+
+    local playRoom = Room.new({
+        id = 112,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 1,
+        resultsTicks = 4,
+    })
+    local playPlayer = addRecord("Pete")
+    playRoom:addMember(playPlayer)
+    playRoom:step()
+    check("the room is playing", playRoom:getPhase() == "playing", playRoom:getPhase())
+    check("color selection is rejected while playing", playRoom:selectColor(playPlayer, "orange") == false)
+
+    -- Records created without a profile keep an in-memory choice.
+    local noProfileRoom = Room.new({
+        id = 113,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 1000,
+    })
+    local noProfile = addRecord("Quinn")
+    noProfileRoom:addMember(noProfile)
+    check("a profile-less record still gets default colors",
+        noProfile.charColors.baobao == "red" and noProfile.charColors.haidao == "blue")
+    check("a profile-less color selection succeeds",
+        noProfileRoom:selectColor(noProfile, "purple") == true)
+    check("the profile-less choice is kept in memory", noProfile.charColors.baobao == "purple")
+
+    -- Starting a round carries the chosen color into Game and roster, while
+    -- spawn positions stay tied to seat order. Bots use the first unused color.
+    local startProfile = {
+        settings = {
+            char = "baobao",
+            charColors = { baobao = "green", haidao = "orange" },
+        },
+    }
+    local startPlayer = { UserId = 9911, DisplayName = "Rita" }
+    local startRecord = PlayerService.add(startPlayer, startProfile)
+    local startRoom = Room.new({
+        id = 114,
+        mode = "practice",
+        maxPlayers = 2,
+        fillBots = true,
+        waitingTicks = 1,
+        resultsTicks = 4,
+    })
+    startRoom:addMember(startRecord)
+    startRoom:step()
+    check("the round starts", startRoom:getPhase() == "playing", startRoom:getPhase())
+    local game = startRoom.game
+    check("Game uses the chosen human color", game.players[startRecord.id].colorIndex == 2,
+        game.players[startRecord.id].colorIndex)
+    check("the bot takes the first unused color", game.players.bot1 ~= nil
+        and game.players.bot1.colorIndex == 0, game.players.bot1 and game.players.bot1.colorIndex)
+    check("the round roster uses the chosen colors",
+        startRoom.roster[1].colorIndex == 2 and startRoom.roster[2].colorIndex == 0)
+    local humanSpawn, botSpawn = Map.SPAWNS[1], Map.SPAWNS[2]
+    check("the human spawn is unchanged by color",
+        game.players[startRecord.id].x == humanSpawn[1] * Constants.TILE + Constants.TILE / 2
+            and game.players[startRecord.id].y == humanSpawn[2] * Constants.TILE + Constants.TILE / 2)
+    check("the bot spawn is unchanged by color",
+        game.players.bot1.x == botSpawn[1] * Constants.TILE + Constants.TILE / 2
+            and game.players.bot1.y == botSpawn[2] * Constants.TILE + Constants.TILE / 2)
+
+    game.winner = game.players[startRecord.id]
+    startRoom:finishRound()
+    check("the result carries the chosen color", startRoom.lastResult.winnerColorIndex == 2,
+        startRoom.lastResult.winnerColorIndex)
+
+    for _, playerRecord in ipairs({ record, lockPlayer, playPlayer, noProfile, startRecord }) do
+        PlayerService.remove(playerRecord.player)
+    end
 end
 
 TestLib.finish()

@@ -85,6 +85,7 @@ Stubs.Hud = {
         Env.myItemsCalls = (Env.myItemsCalls or 0) + 1
     end,
     charSelected = signal("charSelected"),
+    colorSelected = signal("colorSelected"),
     mutePressed = signal("mutePressed"),
     loadingRetryPressed = signal("loadingRetryPressed"),
     lobbyRequested = signal("lobbyRequested"),

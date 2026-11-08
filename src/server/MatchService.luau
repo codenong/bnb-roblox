@@ -758,6 +758,14 @@ function MatchService.selectChar(player: Player, charId: string): boolean
     return room:selectChar(PlayerService.get(player), charId)
 end
 
+function MatchService.selectColor(player: Player, colorKey: string): boolean
+    local room = roomByPlayer[player]
+    if not room then
+        return false
+    end
+    return room:selectColor(PlayerService.get(player), colorKey)
+end
+
 -- "换桌" means leaving the current room. The old room settles/cancels exactly as
 -- any other leave (a live versus round is a forfeit), and the player stays in the
 -- table browser without a room until choosing practice or another table.

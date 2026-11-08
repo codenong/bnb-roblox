@@ -2,6 +2,7 @@
 local TestLib = require("./testlib")
 local check = TestLib.check
 
+local Characters = require("./Characters")
 local ProfileSchema = require("./ProfileSchema")
 
 ---------------------------------------------------------------- 默认档案
@@ -189,6 +190,90 @@ do
     -- erase a preference just because the player owns nothing right now.
     local empty = ProfileSchema.normalize({ loadout = { needle = 2 }, inventory = {} })
     check("loadout survives an empty inventory", empty.loadout.needle == 2, empty.loadout.needle)
+end
+
+---------------------------------------------------------------- 角色颜色
+
+do
+    local profile = ProfileSchema.newProfile()
+    local colors = profile.settings.charColors
+    check("default baobao color is red", colors.baobao == "red", colors.baobao)
+    check("default haidao color is blue", colors.haidao == "blue", colors.haidao)
+    check("new profiles do not share the color map", ProfileSchema.newProfile().settings.charColors ~= colors)
+
+    colors.baobao = "green"
+    check("mutating one profile's colors does not touch another",
+        ProfileSchema.newProfile().settings.charColors.baobao == "red")
+
+    local missing = ProfileSchema.normalize({ settings = {} })
+    check("missing colors are filled with defaults",
+        missing.settings.charColors.baobao == "red" and missing.settings.charColors.haidao == "blue")
+    local nonTable = ProfileSchema.normalize({ settings = { charColors = "pink" } })
+    check("a non-table color map is replaced",
+        nonTable.settings.charColors.baobao == "red" and nonTable.settings.charColors.haidao == "blue")
+
+    local partial = ProfileSchema.normalize({
+        settings = { charColors = { baobao = "purple", mystery = "gold" } },
+    })
+    check("a valid partial color is preserved", partial.settings.charColors.baobao == "purple",
+        partial.settings.charColors.baobao)
+    check("a missing known color is repaired", partial.settings.charColors.haidao == "blue",
+        partial.settings.charColors.haidao)
+    check("unknown color keys are preserved", partial.settings.charColors.mystery == "gold")
+
+    local invalid = ProfileSchema.normalize({
+        settings = { charColors = { baobao = "pink", haidao = 7 } },
+    })
+    check("invalid colors are repaired",
+        invalid.settings.charColors.baobao == "red" and invalid.settings.charColors.haidao == "blue")
+
+    local source = { settings = { charColors = { baobao = "orange" } } }
+    ProfileSchema.normalize(source)
+    check("normalize does not add fields to the input map", source.settings.charColors.haidao == nil)
+    check("normalize does not mutate the input color", source.settings.charColors.baobao == "orange")
+
+    check("the palette has six ordered keys", Characters.COLOR_COUNT == 6
+        and #Characters.COLOR_KEYS == 6
+        and Characters.COLOR_KEYS[1] == "red"
+        and Characters.COLOR_KEYS[6] == "orange")
+    check("valid colors are recognized", Characters.isValidColor("red") == true
+        and Characters.isValidColor("orange") == true)
+    check("invalid colors are rejected", Characters.isValidColor("pink") == false
+        and Characters.isValidColor(nil) == false and Characters.isValidColor(1) == false)
+    check("color indexes are 0-based", Characters.colorIndex("red") == 0
+        and Characters.colorIndex("orange") == 5 and Characters.colorIndex("pink") == nil)
+    check("color keys wrap", Characters.colorKey(0) == "red"
+        and Characters.colorKey(5) == "orange" and Characters.colorKey(6) == "red"
+        and Characters.colorKey(-1) == "orange")
+    check("default colors are per character", Characters.defaultColor("baobao") == "red"
+        and Characters.defaultColor("haidao") == "blue"
+        and Characters.defaultColor("unknown") == "red")
+    check("defaultColors returns fresh tables",
+        Characters.defaultColors() ~= Characters.defaultColors())
+
+    local colorSource = { baobao = "green", mystery = "kept" }
+    local normalized = Characters.normalizeColors(colorSource)
+    check("normalizeColors repairs known entries",
+        normalized.baobao == "green" and normalized.haidao == "blue")
+    check("normalizeColors preserves unknown entries", normalized.mystery == "kept")
+    check("normalizeColors does not mutate its input",
+        colorSource.baobao == "green" and colorSource.haidao == nil)
+    check("colorOf reads a valid color", Characters.colorOf({ haidao = "yellow" }, "haidao") == "yellow")
+    check("colorOf falls back for invalid or missing values",
+        Characters.colorOf({ haidao = "pink" }, "haidao") == "blue"
+            and Characters.colorOf(nil, "baobao") == "red")
+
+    check("sanitizeColorIndex keeps valid indices", Characters.sanitizeColorIndex(0, 3) == 0
+        and Characters.sanitizeColorIndex(5, 3) == 5 and Characters.sanitizeColorIndex(2.9, 3) == 2)
+    check("sanitizeColorIndex uses the fallback for invalid values",
+        Characters.sanitizeColorIndex(6, 2) == 2
+            and Characters.sanitizeColorIndex(-1, 2) == 2
+            and Characters.sanitizeColorIndex(nil, 2) == 2
+            and Characters.sanitizeColorIndex(0 / 0, 2) == 2)
+    check("sanitizeColorIndex wraps an out-of-range fallback",
+        Characters.sanitizeColorIndex("bad", 7) == 1)
+    check("sanitizeColorIndex defaults to the first color without a usable fallback",
+        Characters.sanitizeColorIndex(nil, "bad") == 0)
 end
 
 TestLib.finish()

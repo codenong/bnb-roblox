@@ -101,7 +101,7 @@ function Game.new(playerDefs, opts)
             id = def.id,
             name = def.name,
             isBot = def.isBot == true,
-            colorIndex = i - 1,
+            colorIndex = Characters.sanitizeColorIndex(def.colorIndex, i - 1),
             char = char.id,
             x = spawn[1] * TILE + TILE / 2,
             y = spawn[2] * TILE + TILE / 2,

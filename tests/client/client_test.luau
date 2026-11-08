@@ -101,6 +101,50 @@ do
     check("pick is not sent while playing", picks() == before, picks() - before)
 end
 
+---------------------------------------------------------------- 选色锁定：与选角共用等待窗口
+do
+    local colorRemote = Env.remotes.SelectColor
+    check("the color remote exists", colorRemote ~= nil)
+    local function picks()
+        return #colorRemote.sent
+    end
+    local function waitingState(locked)
+        fire("RoundState", {
+            phase = "waiting",
+            roundId = 20,
+            roster = {},
+            yourId = "u1",
+            charLocked = locked,
+            selectedChar = "baobao",
+            selectedColor = "red",
+            charColors = { baobao = "red", haidao = "blue" },
+            grid = { "c" },
+        })
+    end
+
+    waitingState(false)
+    local before = picks()
+    Env.signals.colorSelected("green")
+    check("color is sent while waiting and unlocked", picks() == before + 1, picks() - before)
+    check("the color remote sends the color key", colorRemote.sent[#colorRemote.sent][1] == "green",
+        colorRemote.sent[#colorRemote.sent][1])
+
+    waitingState(true)
+    before = picks()
+    Env.signals.colorSelected("purple")
+    check("color is not sent while locked", picks() == before, picks() - before)
+
+    waitingState(false)
+    before = picks()
+    Env.signals.colorSelected("orange")
+    check("color is sent again once unlocked", picks() == before + 1, picks() - before)
+
+    fire("RoundState", { phase = "playing", roundId = 21, roster = {}, yourId = "u1", charLocked = false, grid = { "p" } })
+    before = picks()
+    Env.signals.colorSelected("red")
+    check("color is not sent while playing", picks() == before, picks() - before)
+end
+
 ---------------------------------------------------------------- 大厅列表与换桌
 do
     fire("RoundState", {

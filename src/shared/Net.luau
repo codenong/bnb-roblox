@@ -5,6 +5,8 @@
 -- Input        C->S RemoteEvent      dirs: {string}        oldest press first, newest last
 -- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
 -- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
+-- SelectColor  C->S RemoteEvent      "red" | "blue" | ... waiting phase only,
+--                                    applies to the current character
 -- LeaveTable    C<=>S RemoteFunction () -> ok, reason    leave the current room
 -- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns
 -- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change)
@@ -36,6 +38,7 @@ local DEFINITIONS = {
     Input = "RemoteEvent",
     Action = "RemoteEvent",
     SelectChar = "RemoteEvent",
+    SelectColor = "RemoteEvent",
     RoundState = "RemoteEvent",
     Snapshot = "RemoteEvent",
     Fx = "RemoteEvent",

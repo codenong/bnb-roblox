@@ -132,6 +132,58 @@ local aliceEntry = waitingA and findEntry(waitingA.roster, aliceId)
 check("roster carries selected char", aliceEntry and aliceEntry.char == "haidao", aliceEntry and aliceEntry.char)
 check("bob keeps default char", waitingB and waitingB.roster[1].char == "baobao", waitingB and waitingB.roster[1].char)
 
+---------------------------------------------------------------- 选色只影响自己的房间
+
+-- A player with no room (or still loading) must not be able to write colors.
+local stranger = {
+    UserId = 6000,
+    DisplayName = "Stranger",
+}
+MatchService.setLoading(stranger, true)
+check("a loading player cannot pick a color", MatchService.selectColor(stranger, "red") == false)
+MatchService.setLoading(stranger, false)
+check("a player without a room cannot pick a color", MatchService.selectColor(stranger, "red") == false)
+check("a color pick does not create a room", MatchService.getRoomCount() == 2, MatchService.getRoomCount())
+
+-- Alice is on haidao (default blue). Picking green only changes that character.
+Net.reset()
+check("select color", MatchService.selectColor(alice, "green") == true)
+waitingA = MatchService.getSync(alice)
+waitingB = MatchService.getSync(bob)
+check("selected color is reflected", waitingA and waitingA.selectedColor == "green",
+    waitingA and waitingA.selectedColor)
+check("the other character keeps its own color",
+    waitingA and waitingA.charColors.baobao == "red" and waitingA.charColors.haidao == "green")
+aliceEntry = waitingA and findEntry(waitingA.roster, aliceId)
+check("roster carries the selected color", aliceEntry and aliceEntry.colorIndex == 2,
+    aliceEntry and aliceEntry.colorIndex)
+check("a valid pick notifies the room", Net.sentCount(alice, "RoundState") == 1,
+    Net.sentCount(alice, "RoundState"))
+check("a valid pick does not reach another room", Net.sentCount(bob, "RoundState") == 0,
+    Net.sentCount(bob, "RoundState"))
+
+-- Bob's independent room keeps its own default red.
+check("another room keeps its default color", waitingB and waitingB.selectedColor == "red",
+    waitingB and waitingB.selectedColor)
+local bobEntryColor = waitingB and findEntry(waitingB.roster, bobId)
+check("another room roster color is unchanged", bobEntryColor and bobEntryColor.colorIndex == 0,
+    bobEntryColor and bobEntryColor.colorIndex)
+
+-- Invalid values are rejected before any state or broadcast changes.
+Net.reset()
+local colorBefore = waitingA.selectedColor
+local rosterColorBefore = aliceEntry.colorIndex
+check("an unknown color is rejected", MatchService.selectColor(alice, "pink") == false)
+check("a non-string color is rejected", MatchService.selectColor(alice, 3) == false)
+check("rejected colors do not notify the room", Net.sentCount(alice, "RoundState") == 0,
+    Net.sentCount(alice, "RoundState"))
+waitingA = MatchService.getSync(alice)
+check("rejected colors leave the selected color unchanged", waitingA.selectedColor == colorBefore,
+    waitingA.selectedColor)
+aliceEntry = waitingA and findEntry(waitingA.roster, aliceId)
+check("rejected colors leave the roster color unchanged", aliceEntry.colorIndex == rosterColorBefore,
+    aliceEntry.colorIndex)
+
 advance(Constants.WAITING_TICKS - 1)
 check("alice still waiting before countdown ends", MatchService.getSync(alice).phase == "waiting")
 check("bob still waiting before countdown ends", MatchService.getSync(bob).phase == "waiting")

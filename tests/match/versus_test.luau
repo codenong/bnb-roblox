@@ -517,4 +517,53 @@ do
     check("the player lands in a practice room", MatchService.getRoomFor(a).mode == "practice")
 end
 
+---------------------------------------------------------------- 重复颜色、观战者与同款锁定
+
+do
+    local alice = addRecord("ColorAlice", newProfile())
+    local bob = addRecord("ColorBob", newProfile())
+    local room = versusRoom({ id = 560, waitingTicks = 100, charLockTicks = 30 })
+    room:addMember(alice)
+    room:addMember(bob)
+
+    check("the first player can choose red", room:selectColor(alice, "red") == true)
+    check("the second player can choose the same red", room:selectColor(bob, "red") == true)
+    check("duplicate colors are allowed in the roster",
+        room:getSync(alice).roster[1].colorIndex == 0
+            and room:getSync(alice).roster[2].colorIndex == 0)
+    check("each player's state keeps their own color map",
+        room:getSync(alice).selectedColor == "red" and room:getSync(bob).selectedColor == "red")
+
+    -- A spectator can pick a color while waiting, but it never enters the roster.
+    local cara = addRecord("ColorCara", newProfile())
+    room:addMember(cara)
+    check("the third player is a spectator", room:getSync(cara).spectating == true)
+    check("a waiting spectator can change color", room:selectColor(cara, "purple") == true)
+    check("the spectator's own state updates", room:getSync(cara).selectedColor == "purple")
+    check("the spectator does not enter the roster",
+        #room:getSync(alice).roster == 2 and room:getSync(alice).spectatorCount == 1)
+
+    advance(room, 70)
+    check("the versus table is locked", room:isCharLocked() == true)
+    local aliceBefore = room:getSync(alice).selectedColor
+    check("a seated player cannot change color while locked",
+        room:selectColor(alice, "blue") == false)
+    check("the locked seated color is unchanged", room:getSync(alice).selectedColor == aliceBefore)
+    check("a spectator cannot change color while locked",
+        room:selectColor(cara, "orange") == false)
+    check("the locked spectator color is unchanged", cara.charColors.baobao == "purple")
+
+    advance(room, 30)
+    local playing = room:getSync(alice)
+    check("the versus round starts with duplicate colors", playing.phase == "playing",
+        playing.phase)
+    check("both participants keep red in Game",
+        room.game.players[alice.id].colorIndex == 0
+            and room.game.players[bob.id].colorIndex == 0)
+    check("the spectator is not a Game participant", room.game.players[cara.id] == nil)
+    check("color selection is rejected while playing",
+        room:selectColor(alice, "green") == false)
+    check("the playing color is unchanged", room.game.players[alice.id].colorIndex == 0)
+end
+
 TestLib.finish()

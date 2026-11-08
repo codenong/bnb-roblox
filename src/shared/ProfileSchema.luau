@@ -3,6 +3,7 @@
 -- Free and purchased stock are separate buckets so the shop and the daily free
 -- needle can never spend each other's inventory.
 
+local Characters = require(script.Parent.Characters)
 local Shop = require(script.Parent.Shop)
 
 local ProfileSchema = {}
@@ -80,7 +81,10 @@ function ProfileSchema.newProfile(): any
             day = "",
         },
         receipts = {},
-        settings = { char = ProfileSchema.DEFAULT_CHAR },
+        settings = {
+            char = ProfileSchema.DEFAULT_CHAR,
+            charColors = Characters.defaultColors(),
+        },
     }
 end
 
@@ -146,12 +150,14 @@ function ProfileSchema.normalize(value: any): any
 
     result.receipts = tableOrEmpty(result.receipts)
 
-    -- PlayerService validates against Characters when the profile is seated;
-    -- the schema only guards the field's shape so headless tests stay service-free.
+    -- PlayerService validates the selected character when the profile is seated;
+    -- the schema only guards the field's shape. Character colors are pure data,
+    -- so old profiles can be repaired here without Roblox services.
     local settings = tableOrEmpty(result.settings)
     if type(settings.char) ~= "string" or settings.char == "" then
         settings.char = ProfileSchema.DEFAULT_CHAR
     end
+    settings.charColors = Characters.normalizeColors(settings.charColors)
     result.settings = settings
 
     return result

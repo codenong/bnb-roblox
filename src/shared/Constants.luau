@@ -2,6 +2,8 @@
 -- Shared constants. Logic coordinates are the original BnB pixel grid (T=40),
 -- not Roblox studs. The client maps these pixels to the ScreenGui board.
 
+local Characters = require(script.Parent.Characters)
+
 local Constants = {
     -- Map / simulation
     TILE = 40,
@@ -47,7 +49,7 @@ local Constants = {
     -- Teams (sprite variants / HUD colors)
     MAX_PLAYERS = 6,
     PRACTICE_PLAYERS = 2,
-    TEAM_COLORS = { "red", "blue", "green", "yellow", "purple", "orange" },
+    TEAM_COLORS = Characters.COLOR_KEYS,
     TEAM_HEX = {
         red = "#e23b3b",
         blue = "#2f7fe0",

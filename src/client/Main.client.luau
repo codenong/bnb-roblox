@@ -40,6 +40,7 @@ Audio.init()
 local inputRemote = Net.get("Input")
 local actionRemote = Net.get("Action")
 local selectCharRemote = Net.get("SelectChar")
+local selectColorRemote = Net.get("SelectColor")
 local roundStateRemote = Net.get("RoundState")
 local snapshotRemote = Net.get("Snapshot")
 local fxRemote = Net.get("Fx")
@@ -177,6 +178,12 @@ Hud.charSelected.Event:Connect(function(charId)
     -- The server rejects picks inside the lock window; do not even send them.
     if currentState and currentState.phase == "waiting" and not currentState.charLocked then
         selectCharRemote:FireServer(charId)
+    end
+end)
+
+Hud.colorSelected.Event:Connect(function(colorKey)
+    if currentState and currentState.phase == "waiting" and not currentState.charLocked then
+        selectColorRemote:FireServer(colorKey)
     end
 end)
 

@@ -33,7 +33,7 @@ done
 # --- profile data layer: pure Luau modules with a fake DataStore ---
 PROFILE_BUILD=build/profile
 mkdir -p "$PROFILE_BUILD"
-cp build/ProfileSchema.luau build/Shop.luau "$PROFILE_BUILD/"
+cp build/ProfileSchema.luau build/Shop.luau build/Characters.luau "$PROFILE_BUILD/"
 cp ../src/server/ProfileStore.luau ../src/server/ProfileService.luau "$PROFILE_BUILD/"
 cp profile/FakeDataStore.luau profile/profile_schema_test.luau profile/profile_store_test.luau profile/profile_store_faults_test.luau profile/profile_service_test.luau testlib.luau "$PROFILE_BUILD/"
 

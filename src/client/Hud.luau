@@ -7,6 +7,7 @@ local TweenService = game:GetService("TweenService")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
+local Characters = require(Shared:WaitForChild("Characters"))
 local RoomName = require(Shared:WaitForChild("RoomName"))
 local Shop = require(Shared:WaitForChild("Shop"))
 local Sprites = require(Shared:WaitForChild("Sprites"))
@@ -15,6 +16,7 @@ local AssetIds = require(Shared:WaitForChild("AssetIds"))
 local Hud = {}
 
 Hud.charSelected = Instance.new("BindableEvent")
+Hud.colorSelected = Instance.new("BindableEvent") -- color key, current character
 Hud.mutePressed = Instance.new("BindableEvent")
 Hud.loadingRetryPressed = Instance.new("BindableEvent")
 Hud.lobbyRequested = Instance.new("BindableEvent")
@@ -83,6 +85,7 @@ local waitingLobbyButton
 local waitingSettingsButton
 local waitingSlots = {}
 local waitingCards = {}
+local waitingSwatches = {}
 local lobbyOverlay
 local lobbyStatus
 local lobbyMyItems
@@ -260,14 +263,17 @@ local function asset(key)
     return AssetIds[key] or ""
 end
 
-local function teamColor(index)
-    local key = Sprites.teamKey(index or 0)
+local function colorForKey(key)
     local hex = Constants.TEAM_HEX[key] or "#ffffff"
     return Color3.fromRGB(
         tonumber(string.sub(hex, 2, 3), 16) or 255,
         tonumber(string.sub(hex, 4, 5), 16) or 255,
         tonumber(string.sub(hex, 6, 7), 16) or 255
     )
+end
+
+local function teamColor(index)
+    return colorForKey(Sprites.teamKey(index or 0))
 end
 
 local function formatClock(seconds)
@@ -693,6 +699,39 @@ local function buildWaiting()
         12,
         false
     )
+
+    -- Six palette swatches sit between the subtitle and the character cards.
+    -- They follow the current character's selection; the cards preview each
+    -- character's own remembered color.
+    label(
+        waitingOverlay,
+        "ColorLabel",
+        "颜色",
+        UDim2.fromOffset(48, 24),
+        UDim2.fromOffset(162, 74),
+        SUBTLE,
+        11
+    )
+    for index, key in ipairs(Characters.COLOR_KEYS) do
+        local swatch = Instance.new("TextButton")
+        swatch.Name = "Color_" .. key
+        swatch.Size = UDim2.fromOffset(32, 24)
+        swatch.Position = UDim2.fromOffset(218 + (index - 1) * 40, 74)
+        swatch.BackgroundColor3 = colorForKey(key)
+        swatch.BackgroundTransparency = 0.05
+        swatch.BorderSizePixel = 0
+        swatch.AutoButtonColor = false
+        swatch.Text = ""
+        swatch.Parent = waitingOverlay
+        round(swatch, 0.35)
+        local swatchStroke = outline(swatch, Color3.fromRGB(55, 100, 124), 1, 0.55)
+        swatch.Activated:Connect(function()
+            if state and state.phase == "waiting" and not state.charLocked then
+                Hud.colorSelected:Fire(key)
+            end
+        end)
+        waitingSwatches[key] = { button = swatch, stroke = swatchStroke }
+    end
 
     local cardXs = { 48, 312 }
     local chars = { "baobao", "haidao" }
@@ -1616,11 +1655,13 @@ local function updateWaiting()
         return
     end
 
-    local yourEntry = rosterById[state.yourId]
-    local colorIndex = if yourEntry then yourEntry.colorIndex else 0
-    local color = teamColor(colorIndex)
+    local charColors = Characters.normalizeColors(state.charColors)
+    local currentChar = state.selectedChar or selectedChar
     local locked = state.charLocked == true
     for char, entry in pairs(waitingCards) do
+        local colorKey = Characters.colorOf(charColors, char)
+        local color = colorForKey(colorKey)
+        local colorIndex = Characters.colorIndex(colorKey) or 0
         local portraitKey = Sprites.portraitKey(char, colorIndex)
         local id = asset(portraitKey)
         if id ~= "" then
@@ -1637,7 +1678,7 @@ local function updateWaiting()
                 end
             end
         end
-        local isSelected = char == (state.selectedChar or selectedChar)
+        local isSelected = char == currentChar
         local greyedOut = locked and not isSelected
         entry.selected.Visible = isSelected
         entry.stroke.Color = if isSelected then GOLD else Color3.fromRGB(55, 100, 124)
@@ -1647,6 +1688,24 @@ local function updateWaiting()
         -- Locked: the unselected card is dimmed and veiled grey; the pick stays vivid.
         entry.mask.Visible = greyedOut
         entry.portrait.ImageColor3 = if greyedOut then LOCKED_TINT else Color3.new(1, 1, 1)
+    end
+
+    local selectedColor = state.selectedColor
+    if not Characters.isValidColor(selectedColor) then
+        selectedColor = Characters.colorOf(charColors, currentChar)
+    end
+    for key, entry in pairs(waitingSwatches) do
+        local isSelected = key == selectedColor
+        entry.stroke.Color = if isSelected then GOLD else Color3.fromRGB(55, 100, 124)
+        entry.stroke.Thickness = if isSelected then 3 else 1
+        entry.stroke.Transparency = if isSelected then 0.05 else 0.55
+        local transparency = 0.05
+        if isSelected then
+            transparency = 0
+        elseif locked then
+            transparency = 0.55
+        end
+        entry.button.BackgroundTransparency = transparency
     end
 
     local maxPlayers = state.maxPlayers or Constants.MAX_PLAYERS
@@ -1718,10 +1777,10 @@ local function updateWaiting()
     elseif state.endsIn and state.endsIn > 0 then
         waitingCountdown.Text = string.format("%d 秒后开始", state.endsIn)
         waitingHint.Text = if locked
-            then "角色已锁定 · 即将开始"
+            then "角色与颜色已锁定 · 即将开始"
             elseif practice
-            then "点击角色卡选择 · 击败 Bot 赢得对局"
-            else "点击角色卡选择 · 对战期间离开判负"
+            then "点击角色卡和色块选择 · 击败 Bot 赢得对局"
+            else "点击角色卡和色块选择 · 对战期间离开判负"
     else
         waitingCountdown.Text = if practice then "等待玩家加入…" else "等待另一名玩家…"
         waitingHint.Text = if practice

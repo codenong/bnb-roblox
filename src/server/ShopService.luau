@@ -128,7 +128,13 @@ end
 -- both the grant and the durability check, with the receipt id preventing a
 -- duplicate grant.
 function ShopService:processReceipt(player, receiptInfo): (boolean, string?)
-    if type(player) ~= "table" and type(player) ~= "Instance" then
+    -- A connected player is a Roblox Instance, for which type() answers "userdata"
+    -- (only typeof() says "Instance"); an offline buyer is a plain table. Do not
+    -- test the type name: accept anything that exposes a numeric UserId.
+    local readable, userId = pcall(function()
+        return (player :: any).UserId
+    end)
+    if not readable or type(userId) ~= "number" then
         return false, "invalid_player"
     end
     if type(receiptInfo) ~= "table" then
