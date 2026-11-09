@@ -217,7 +217,7 @@ end
 -- Touch uses a radial dead zone: 10% of the 54px travel is roughly 5-6px from
 -- the centre, so a small off-centre thumb push responds immediately. This is
 -- deliberately separate from the physical gamepad's 35% STICK_THRESHOLD.
-local TOUCH_STICK_DEADZONE = 0.10
+local TOUCH_STICK_DEADZONE = 0.04
 
 local function touchDirectionFromAxes(x: number, y: number): string?
     local deadzone = TOUCH_STICK_DEADZONE

@@ -10,6 +10,11 @@ local RoomName = {}
 local MAX_CODEPOINTS = Constants.ROOM_NAME_MAX_CODEPOINTS
 local MIN_VISIBLE_CODEPOINTS = Constants.ROOM_NAME_MIN_VISIBLE_CODEPOINTS
 
+-- A valid name is at most MAX_CODEPOINTS characters of up to 4 bytes each, plus
+-- some padding that trimming removes. Anything longer is rejected before a single
+-- character is inspected, so an oversized request costs almost nothing.
+local MAX_RAW_BYTES = MAX_CODEPOINTS * 4 + 64
+
 -- Unicode spaces other than the ASCII space are invisible in the browser and
 -- can therefore make a room name look blank. Reject them instead of folding
 -- them to ASCII spaces: the server must never store an ambiguous display name.
@@ -77,7 +82,7 @@ end
 -- normalized to LF before this check so Windows-style input is accepted.
 local function validateBody(text)
     local length = utf8.len(text)
-    if length == nil then
+    if length == nil or length < 1 or length > MAX_CODEPOINTS then
         return nil
     end
     local visible = 0
@@ -106,7 +111,7 @@ end
 
 -- Normalize line endings, trim surrounding spaces/newlines, then validate.
 function RoomName.normalize(raw)
-    if type(raw) ~= "string" then
+    if type(raw) ~= "string" or #raw > MAX_RAW_BYTES then
         return nil, "invalid_name"
     end
     local text = raw:gsub("\r\n", "\n"):gsub("\r", "\n")

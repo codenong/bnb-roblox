@@ -44,6 +44,7 @@ local now = os.clock
 local versusRoomSequence = 0
 local passwordAttempts = {} -- [Player] = { count = n, windowStart = t }
 local configAttempts = {} -- [Player] = { count = n, windowStart = t }
+local selectAttempts = {} -- [Player] = { count = n, windowStart = t }; character and color picks share one budget
 
 -- Seat a record and keep the reverse index in sync. A fresh practice room can
 -- never reject its only human, but versus joins can lose a race with a seat
@@ -256,6 +257,7 @@ function MatchService.init(opts)
     lobbyPlayers = {}
     passwordAttempts = {}
     configAttempts = {}
+    selectAttempts = {}
     table.clear(scratch)
     settlementHandler = opts.onSettled
     usageSettlementHandler = opts.onUsageSettled
@@ -398,6 +400,7 @@ function MatchService.onPlayerRemoving(player: Player, record)
     lobbyPlayers[player] = nil
     passwordAttempts[player] = nil
     configAttempts[player] = nil
+    selectAttempts[player] = nil
     detachPlayer(player, record)
 end
 
@@ -474,7 +477,10 @@ function MatchService.joinVersus(player: Player, tableId: number?, password: any
             recordPasswordFailure(player)
             return false, "wrong_password", nil
         end
-        passwordAttempts[player] = nil
+        -- A correct password deliberately does NOT clear the failure window. If it
+        -- did, a second account holding a known password could be used to hand the
+        -- budget back after every few guesses and brute-force another table. The
+        -- window expires by itself.
     end
 
     if current then
@@ -755,12 +761,20 @@ function MatchService.selectChar(player: Player, charId: string): boolean
     if not room then
         return false
     end
+    -- Every accepted pick is broadcast to the whole room, so an unthrottled client
+    -- could flood its table. Excess picks are dropped silently.
+    if not consumeAttempt(selectAttempts, player, Constants.SELECT_ATTEMPT_MAX, Constants.SELECT_ATTEMPT_WINDOW_SECONDS) then
+        return false
+    end
     return room:selectChar(PlayerService.get(player), charId)
 end
 
 function MatchService.selectColor(player: Player, colorKey: string): boolean
     local room = roomByPlayer[player]
     if not room then
+        return false
+    end
+    if not consumeAttempt(selectAttempts, player, Constants.SELECT_ATTEMPT_MAX, Constants.SELECT_ATTEMPT_WINDOW_SECONDS) then
         return false
     end
     return room:selectColor(PlayerService.get(player), colorKey)

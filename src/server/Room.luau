@@ -1051,6 +1051,9 @@ function Room:selectChar(record, charId: string): boolean
     if self:isCharLocked() then
         return false
     end
+    if record.char == charId then
+        return true -- already selected: nothing changed, nothing to broadcast
+    end
     if not PlayerService.setChar(record.player, charId) then
         return false
     end
@@ -1065,6 +1068,9 @@ function Room:selectColor(record, colorKey: string): boolean
     end
     if self:isCharLocked() then
         return false
+    end
+    if Characters.isValidColor(colorKey) and Characters.colorOf(record.charColors, record.char) == colorKey then
+        return true -- already selected: nothing changed, nothing to broadcast
     end
     if not PlayerService.setColor(record.player, colorKey) then
         return false

@@ -490,7 +490,8 @@ do
     check("the correct password works after the window expires", ok == true, tostring(reason))
     check("the successful player is seated", MatchService.getRoomFor(b) == room)
 
-    -- A success clears the player's failure history for the next attempt.
+    -- A success must NOT hand the failure budget back. Otherwise a second account
+    -- holding a known password could reset it after every few guesses.
     MatchService.leaveTable(b)
     check("leaving a password room succeeds", MatchService.getRoomFor(b) == nil)
     for i = 1, 4 do
@@ -498,7 +499,12 @@ do
         check("post-success failure " .. i, ok == false and reason == "wrong_password", reason)
     end
     ok, reason = MatchService.joinVersus(b, room.id, "1234")
-    check("a success reset the failure budget", ok == true, tostring(reason))
+    check("a correct password is still accepted while under the limit", ok == true, tostring(reason))
+    MatchService.leaveTable(b)
+    ok, reason = MatchService.joinVersus(b, room.id, "0000")
+    check("the fifth failure is still counted", ok == false and reason == "wrong_password", reason)
+    ok, reason = MatchService.joinVersus(b, room.id, "1234")
+    check("the earlier success did not reset the budget", ok == false and reason == "too_many_attempts", reason)
 end
 
 ---------------------------------------------------------------- 配置限流

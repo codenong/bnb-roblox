@@ -83,11 +83,16 @@ local Constants = {
     ROOM_NAME_MAX_CODEPOINTS = 30,
     ROOM_PASSWORD_MIN_DIGITS = 4,
     ROOM_PASSWORD_MAX_DIGITS = 6,
-    -- Fixed-window abuse guards, per player. A correct password clears the
-    -- password-failure window; successful config changes do not clear theirs.
+    -- Fixed-window abuse guards, per player. Nothing clears a window early, a
+    -- correct password included: otherwise a second account holding a known
+    -- password could hand the failure budget back and brute-force another table.
     PASSWORD_ATTEMPT_MAX = 5,
     PASSWORD_ATTEMPT_WINDOW_SECONDS = 30,
     ROOM_CONFIG_ATTEMPT_MAX = 5,
+    -- Character/color picks: generous for real clicking (a full lap of the six
+    -- colors fits), tight enough that spamming cannot flood a room.
+    SELECT_ATTEMPT_MAX = 8,
+    SELECT_ATTEMPT_WINDOW_SECONDS = 2,
     ROOM_CONFIG_WINDOW_SECONDS = 10,
     NOTICE_SECONDS = 3.5,
     -- A game must last this long to count toward versus stats. A round that ends
