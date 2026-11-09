@@ -945,7 +945,7 @@ local function updateDeaths(now)
     deathEffects = remaining
 end
 
-local function updatePlayers(players, previousPlayers, alpha, now, warmup)
+local function updatePlayers(players, previousPlayers, alpha, now, warmup, localPos)
     local seen = {}
     for _, player in ipairs(players or {}) do
         local previous = previousPlayers[player.id]
@@ -955,7 +955,11 @@ local function updatePlayers(players, previousPlayers, alpha, now, warmup)
 
         if player.alive then
             local x, y = player.x, player.y
-            if previous and previous.alive then
+            if localPos and player.id == localPos.id then
+                -- The local player is drawn from client prediction; remote
+                -- players keep the one-snapshot interpolation below.
+                x, y = localPos.x, localPos.y
+            elseif previous and previous.alive then
                 local dx, dy = player.x - previous.x, player.y - previous.y
                 if dx * dx + dy * dy < 100 * 100 then
                     x = previous.x + (player.x - previous.x) * alpha
@@ -991,7 +995,10 @@ function Renderer.setYourId(id: string?)
     yourId = id
 end
 
-function Renderer.update(previous, current, alpha, now, warmup)
+-- localPos is an optional {id, x, y} override for the local player only. It is
+-- the predicted position from Prediction; when nil every player interpolates
+-- from snapshots exactly as before.
+function Renderer.update(previous, current, alpha, now, warmup, localPos)
     if not current then
         updateDeaths(now)
         return
@@ -1007,7 +1014,14 @@ function Renderer.update(previous, current, alpha, now, warmup)
         end
     end
 
-    updatePlayers(current.players or {}, previousPlayers, alpha, now, warmup or current.warmup or 0)
+    updatePlayers(
+        current.players or {},
+        previousPlayers,
+        alpha,
+        now,
+        warmup or current.warmup or 0,
+        localPos
+    )
     updateItems(current.items or {}, now)
     updateBombs(current.bombs or {}, now)
     updateExplosions(current.expl or {}, now)

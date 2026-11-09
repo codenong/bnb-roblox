@@ -61,6 +61,15 @@ local Constants = {
 
     -- Match flow / networking
     SNAPSHOT_RATE = 20,
+    -- Sequenced input commands are held for this many simulation ticks before
+    -- being applied. The client predicts locally, so the added latency is hidden
+    -- for movement; the buffer preserves the order/duration of direction changes
+    -- instead of letting network jitter coalesce them into one "latest" state.
+    INPUT_BUFFER_TICKS = 2,
+    -- Hard cap on queued commands per player. A burst or a malicious client
+    -- cannot grow the room's memory without bound; oldest commands are dropped
+    -- first and the client reconciles from the authoritative snapshot.
+    INPUT_QUEUE_LIMIT = 12,
     WAITING_SECONDS = 10,
     RESULTS_SECONDS = 4,
     WAITING_TICKS = 10 * 30,

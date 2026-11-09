@@ -1,6 +1,8 @@
 -- src/client/Main.client.luau
 -- Client entry: receive snapshots, interpolate, render the 2D board and HUD,
--- and send only input/action intents. No movement or collision runs here.
+-- and send input/action intents. The local player's movement is predicted with
+-- the same shared Movement code as the server, then reconciled against
+-- acknowledged snapshots; the server stays authoritative for everything else.
 
 local MarketplaceService = game:GetService("MarketplaceService")
 local Players = game:GetService("Players")
@@ -13,6 +15,7 @@ local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
 
 local Shared = ReplicatedStorage:WaitForChild("Shared")
+local Constants = require(Shared:WaitForChild("Constants"))
 local Net = require(Shared:WaitForChild("Net"))
 
 local Audio = require(script.Parent:WaitForChild("Audio"))
@@ -20,6 +23,7 @@ local Board = require(script.Parent:WaitForChild("Board"))
 local Hud = require(script.Parent:WaitForChild("Hud"))
 local Input = require(script.Parent:WaitForChild("Input"))
 local Interpolation = require(script.Parent:WaitForChild("Interpolation"))
+local Prediction = require(script.Parent:WaitForChild("Prediction"))
 local Renderer = require(script.Parent:WaitForChild("Renderer"))
 
 ---------------------------------------------------------------- 界面
@@ -93,10 +97,14 @@ local noticeRemote = Net.get("Notice")
 ---------------------------------------------------------------- 状态
 
 local interp = Interpolation.new()
+local prediction = Prediction.new()
 local currentState = nil
 local lastSnapshot = nil
-local lastSentInput = nil
-local lastInputAt = 0
+-- One sequenced command per 30Hz tick. Sequence numbers stay monotonic for the
+-- whole session; the server scopes them to the current round.
+local inputSeq = 0
+local inputAccumulator = 0
+local inputStarted = false
 -- True after "换桌" leaves the room and before a new mode is chosen. The server
 -- has no room for this player then, so a stale RoundState already in flight must
 -- not close the browser or make the board look like a live round.
@@ -110,7 +118,9 @@ end
 local function resetVisibleRound()
     interp:reset()
     lastSnapshot = nil
-    lastSentInput = nil
+    prediction:reset()
+    inputStarted = false
+    inputAccumulator = 0
     Renderer.clear()
     Board.setSliding({})
 end
@@ -129,6 +139,9 @@ local function applySnapshot(snapshot)
 
     lastSnapshot = snapshot
     interp:push(snapshot)
+    if currentState and currentState.phase == "playing" then
+        prediction:onSnapshot(snapshot, currentState.yourId, os.clock())
+    end
     Hud.applySnapshot(snapshot)
 end
 
@@ -175,11 +188,19 @@ local function applyState(newState)
     Renderer.setYourId(newState.yourId)
     if newState.grid then
         Board.setGrid(newState.grid)
+        -- RoundState always carries the map and arrives before the first round
+        -- snapshot, which only includes the grid when it changes.
+        prediction:setGrid(newState.grid)
     end
     Hud.setState(newState)
 
     local playing = newState.phase == "playing" and newState.yourId ~= nil
     setInputEnabled(playing)
+    if not playing then
+        prediction:reset()
+        inputStarted = false
+        inputAccumulator = 0
+    end
 
     if newState.snapshot then
         resetVisibleRound()
@@ -361,6 +382,9 @@ end
 local function leaveToLobby(fetchInventory: boolean?)
     local wasBrowsing = browsing
     browsing = true
+    prediction:reset()
+    inputStarted = false
+    inputAccumulator = 0
     local ok, result = pcall(function()
         return leaveTableRemote:InvokeServer()
     end)
@@ -485,29 +509,73 @@ startLoadingPoll()
 
 ---------------------------------------------------------------- 每帧
 
-RunService.RenderStepped:Connect(function()
+local INPUT_INTERVAL = 1 / Constants.TICK_RATE
+-- A long frame must not fire a burst of catch-up commands. The server buffer is
+-- short, so the client simply skips the missed ticks and reconciles from the
+-- next authoritative snapshot.
+local MAX_INPUT_CATCHUP = 3
+
+RunService.RenderStepped:Connect(function(dt)
     local now = os.clock()
+    -- Roblox always supplies dt; the headless tests call the captured callback
+    -- without one and treat a frame as 60Hz.
+    if type(dt) ~= "number" or dt <= 0 then
+        dt = 1 / 60
+    end
+    prediction:update(dt)
+
+    -- `browsing` means "换桌"/shop already left the room; the last RoundState is
+    -- still cached, so do not keep streaming input or drawing a frozen player.
+    local playing = currentState ~= nil
+        and not browsing
+        and currentState.phase == "playing"
+        and currentState.yourId ~= nil
+
+    if playing then
+        if not inputStarted then
+            -- Send the first command on the first frame of the round instead of
+            -- waiting a full tick to accumulate.
+            inputStarted = true
+            inputAccumulator = INPUT_INTERVAL
+        end
+        inputAccumulator = math.min(
+            inputAccumulator + dt,
+            INPUT_INTERVAL * (MAX_INPUT_CATCHUP + 1)
+        )
+        local sent = 0
+        while inputAccumulator >= INPUT_INTERVAL and sent < MAX_INPUT_CATCHUP do
+            inputAccumulator -= INPUT_INTERVAL
+            sent += 1
+            inputSeq += 1
+            local dirs = Input.getDirs()
+            inputRemote:FireServer({
+                seq = inputSeq,
+                roundId = currentState.roundId,
+                dirs = dirs,
+            })
+            -- The shadow advances on the same timeline as the command stream:
+            -- one command, one 30Hz step, exactly like the server buffer.
+            prediction:step(inputSeq, dirs, now)
+        end
+    else
+        inputStarted = false
+        inputAccumulator = 0
+    end
+
     local previous, current, alpha = interp:sample(now)
+
+    local localPos = nil
+    if playing then
+        local x, y = prediction:getRenderPosition(now)
+        if x ~= nil and y ~= nil then
+            localPos = { id = currentState.yourId, x = x, y = y }
+        end
+    end
 
     if current then
         local warmup = current.warmup or 0
-        Renderer.update(previous, current, alpha, now, warmup)
+        Renderer.update(previous, current, alpha, now, warmup, localPos)
     else
-        Renderer.update(nil, nil, 1, now, 0)
-    end
-
-    if currentState and currentState.phase == "playing" and currentState.yourId then
-        local dirs = Input.getDirs()
-        local key = table.concat(dirs, ",")
-        if key ~= lastSentInput then
-            lastSentInput = key
-            lastInputAt = now
-            inputRemote:FireServer(dirs)
-        elseif #dirs > 0 and now - lastInputAt > 1 then
-            -- A new round clears the server's input; resend held directions
-            -- occasionally so a player who never releases a key keeps moving.
-            lastInputAt = now
-            inputRemote:FireServer(dirs)
-        end
+        Renderer.update(nil, nil, 1, now, 0, localPos)
     end
 end)

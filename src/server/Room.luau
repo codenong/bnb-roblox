@@ -173,6 +173,10 @@ function Room.new(opts)
     -- Items are settled once per participant per round. This set survives a
     -- participant leaving the room so a later round-end/save cannot charge twice.
     self.usageSettled = {}
+    -- [participantId] = { queue = {{seq, dirs}, ...}, lastQueued = n }
+    -- Sequenced input waits here so every command is applied for exactly one
+    -- simulation tick, in order. Legacy unsequenced input bypasses the queue.
+    self.inputQueues = {}
 
     return self
 end
@@ -518,6 +522,7 @@ function Room:removeMember(record)
 
     local wasSeated = self.seatById[record.id] ~= nil
     self.memberById[record.id] = nil
+    self.inputQueues[record.id] = nil
     for i = #self.members, 1, -1 do
         if self.members[i] == record then
             table.remove(self.members, i)
@@ -632,6 +637,33 @@ function Room:collectFx()
     end
 end
 
+function Room:_resetInputQueues()
+    self.inputQueues = {}
+end
+
+-- Drain at most one buffered command per participant per simulation tick.
+-- Requiring two queued commands keeps jitter from making the server consume a
+-- later command too early; the wait timeout guarantees liveness if the client
+-- sends slower than 30Hz or a packet is late. Game keeps the previous direction
+-- when nothing is applied, which is the same "held key" behavior as before.
+function Room:_applyInputCommands()
+    if not self.game then
+        return
+    end
+    for id, state in pairs(self.inputQueues) do
+        local command = state.queue[1]
+        if command then
+            command.wait = (command.wait or 0) + 1
+            if #state.queue >= Constants.INPUT_BUFFER_TICKS
+                or command.wait >= Constants.INPUT_BUFFER_TICKS
+            then
+                table.remove(state.queue, 1)
+                self.game:setInput(id, command.dirs, command.seq)
+            end
+        end
+    end
+end
+
 function Room:_startRound()
     local participants = {}
     local defs = {}
@@ -714,6 +746,7 @@ function Room:_startRound()
     self.roster = buildRoster(defs)
     self.rosterById = indexRoster(self.roster)
     self.fxState = makeFxState(self.game)
+    self:_resetInputQueues()
     self.snapshot:reset()
     self:broadcastState()
 end
@@ -742,6 +775,7 @@ function Room:resetForWaiting()
     self.roundNoAction = {}
     self.roundNoActionChecked = false
     self.roundEndReason = nil
+    self:_resetInputQueues()
     -- A seat opened by a departing player stays open for a new joiner. Existing
     -- spectators remain read-only and are never seated automatically.
     self:_refreshWaitingRoster()
@@ -936,6 +970,10 @@ function Room:_stepPlaying()
         return
     end
 
+    -- Apply the buffered human commands for this tick before movement. Bots
+    -- still decide directly; only the network input path needs a queue.
+    self:_applyInputCommands()
+
     if self.game.warmup <= 0 then
         BotService.act(self.game, self.brains)
     end
@@ -994,11 +1032,20 @@ function Room:step()
     end
 end
 
-function Room:setInput(record, dirs)
-    if self.phase ~= "playing" or not self.game or type(dirs) ~= "table" then
+function Room:setInput(record, payload)
+    if self.phase ~= "playing" or not self.game or type(payload) ~= "table" then
         return
     end
     if not record or not self.memberById[record.id] then
+        return
+    end
+
+    -- New clients send { seq, roundId, dirs }. An unsequenced plain array is
+    -- still accepted so older clients (and direct engine tests) keep their old
+    -- immediate behavior; those commands have no ack to reconcile against.
+    local sequenced = payload.seq ~= nil or payload.roundId ~= nil
+    local dirs = if sequenced then payload.dirs else payload
+    if type(dirs) ~= "table" then
         return
     end
 
@@ -1015,11 +1062,52 @@ function Room:setInput(record, dirs)
     end
 
     local participant = self.game.players[record.id]
-    if participant and participant.alive then
-        if #clean > 0 then
+    if not participant then
+        return
+    end
+
+    if not sequenced then
+        if participant.alive and #clean > 0 then
             self.roundActivity[record.id] = true
         end
         self.game:setInput(record.id, clean)
+        return
+    end
+
+    -- A command from a previous round must never leak into the current one.
+    if payload.roundId ~= self.roundId then
+        return
+    end
+    local seq = payload.seq
+    if type(seq) ~= "number"
+        or seq ~= seq
+        or seq == math.huge
+        or seq == -math.huge
+        or seq % 1 ~= 0
+        or seq <= 0
+    then
+        return
+    end
+
+    local state = self.inputQueues[record.id]
+    if not state then
+        state = { queue = {}, lastQueued = 0 }
+        self.inputQueues[record.id] = state
+    end
+    -- Duplicate/reordered/old commands are ignored. The client sends one
+    -- command per 30Hz tick, so strictly increasing seq is the normal case.
+    if seq <= state.lastQueued then
+        return
+    end
+    state.lastQueued = seq
+
+    if participant.alive and #clean > 0 then
+        self.roundActivity[record.id] = true
+    end
+
+    table.insert(state.queue, { seq = seq, dirs = clean })
+    if #state.queue > Constants.INPUT_QUEUE_LIMIT then
+        table.remove(state.queue, 1)
     end
 end
 

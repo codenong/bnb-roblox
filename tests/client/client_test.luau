@@ -578,4 +578,106 @@ do
         Env.purchasePrompts and #Env.purchasePrompts == 1, Env.purchasePrompts and #Env.purchasePrompts)
 end
 
+---------------------------------------------------------------- 输入序号、30Hz 命令流与本地预测
+do
+    local inputRemote = Env.remotes.Input
+    local function sentCount()
+        return #inputRemote.sent
+    end
+
+    -- A real 15x13 map: the predictor parses the rows into collision tiles.
+    local rows = {}
+    for y = 1, 13 do
+        rows[y] = string.rep(".", 15)
+    end
+
+    -- The previous blocks left the browser open; rejoin a fresh practice room
+    -- with a real playing snapshot.
+    Env.invokeResponses.JoinTable = function()
+        return { ok = true, roomId = 9 }
+    end
+    Env.syncResponse = {
+        phase = "playing",
+        roomId = 9,
+        roundId = 500,
+        roster = {},
+        yourId = "u1",
+        grid = rows,
+        snapshot = {
+            grid = rows,
+            warmup = 0,
+            tick = 1,
+            players = {
+                {
+                    id = "u1",
+                    x = 60,
+                    y = 60,
+                    fx = 60,
+                    fy = 60,
+                    ack = 0,
+                    alive = true,
+                    trapped = false,
+                    speed = 144,
+                },
+            },
+            bombs = {},
+            crateSlides = {},
+        },
+    }
+    Env.dirs = nil
+    Env.signals.tableSelected("practice")
+    check("the prediction test round is active", Env.inputEnabled == true)
+
+    local before = sentCount()
+    Env.renderStepped(1 / 60)
+    check("the first playing frame sends exactly one command", sentCount() == before + 1,
+        sentCount() - before)
+    local first = inputRemote.sent[#inputRemote.sent]
+    local payload = first and first[1]
+    check("the input remote sends an envelope, not a bare array",
+        type(payload) == "table" and type(payload.seq) == "number")
+    check("the envelope carries the round id", payload and payload.roundId == 500,
+        payload and payload.roundId)
+    check("the envelope carries the direction list", payload and type(payload.dirs) == "table")
+    local firstSeq = payload.seq
+
+    Env.dirs = { "right" }
+    for _ = 1, 8 do
+        Env.renderStepped(1 / 60)
+    end
+    local commands = sentCount() - before
+    check("input streams at 30Hz instead of once per frame",
+        commands >= 4 and commands <= 5, commands)
+    local latest = inputRemote.sent[#inputRemote.sent][1]
+    check("sequence numbers increase", latest.seq > firstSeq, latest.seq)
+    check("every command is scoped to the current round", latest.roundId == 500)
+    check("every command carries the latest held directions", latest.dirs[1] == "right",
+        latest.dirs[1])
+
+    local rendered = Env.renderUpdate
+    check("the renderer receives a predicted local position",
+        rendered ~= nil and rendered.localPos ~= nil)
+    check("the predicted position targets the local player",
+        rendered and rendered.localPos and rendered.localPos.id == "u1")
+    check("prediction starts from the authoritative position and advances",
+        rendered and rendered.localPos and rendered.localPos.x >= 60
+            and rendered.localPos.y == 60,
+        rendered and rendered.localPos and rendered.localPos.x)
+
+    -- The server snapshot is still authoritative for everyone else; the local
+    -- override must disappear as soon as the player leaves the room.
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = true }
+    end
+    Env.signals.lobbyRequested()
+    local leftAt = sentCount()
+    Env.renderStepped(1 / 30)
+    Env.renderStepped(1 / 30)
+    check("leaving the room stops the input stream", sentCount() == leftAt,
+        sentCount() - leftAt)
+    local afterLeave = Env.renderUpdate
+    check("leaving the room drops the predicted override",
+        afterLeave ~= nil and afterLeave.localPos == nil)
+end
+
 TestLib.finish()

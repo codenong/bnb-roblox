@@ -79,6 +79,7 @@ cp match/shop_service_test.luau "$MATCH_BUILD/"
 cp match/shop_settlement_test.luau "$MATCH_BUILD/"
 cp match/shop_auto_carry_test.luau "$MATCH_BUILD/"
 cp match/shop_exit_test.luau "$MATCH_BUILD/"
+cp match/input_buffer_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (room manager, stubbed server)"
@@ -103,6 +104,8 @@ echo "== shop_exit_test.luau (shop entry as a room exit, roomless shop)"
 "$LUAU" "$MATCH_BUILD/shop_exit_test.luau"
 echo "== shop_service_test.luau (receipts, durability, direct store path)"
 "$LUAU" "$MATCH_BUILD/shop_service_test.luau"
+echo "== input_buffer_test.luau (sequenced input, 2-tick buffer, acks, snapshot fields)"
+"$LUAU" "$MATCH_BUILD/input_buffer_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client
@@ -118,13 +121,27 @@ mkdir -p "$CLIENT_BUILD"
   printf '\nreturn true\n'
 } > "$CLIENT_BUILD/Main.luau"
 cp ../src/client/Interpolation.luau "$CLIENT_BUILD/Interpolation.luau"
-cp client/ClientEnv.luau client/Stubs.luau client/client_test.luau client/client_loading_test.luau testlib.luau "$CLIENT_BUILD/"
+# The real shared modules the prediction path needs, plus the real Prediction
+# module. Everything else under script.Parent stays stubbed below.
+for name in Constants Characters Grid Mounts Movement; do
+  cp "build/$name.luau" "$CLIENT_BUILD/"
+done
+{
+  printf 'local __env = require("./ClientEnv")\n'
+  printf 'local game = __env.game\n'
+  sed -E 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
+    ../src/client/Prediction.luau
+} > "$CLIENT_BUILD/Prediction.luau"
+cp client/ClientEnv.luau client/Stubs.luau client/client_test.luau client/client_loading_test.luau \
+  client/prediction_test.luau testlib.luau "$CLIENT_BUILD/"
 for name in Board Hud Input Audio Renderer Net; do
   printf 'return require("./Stubs").%s\n' "$name" > "$CLIENT_BUILD/$name.luau"
 done
 
 echo "== client_test.luau (Main.client with stubs)"
 "$LUAU" "$CLIENT_BUILD/client_test.luau"
+echo "== prediction_test.luau (local prediction, reconciliation, bomb pass)"
+"$LUAU" "$CLIENT_BUILD/prediction_test.luau"
 
 # Main runs once per process, so every startup scenario gets its own process.
 for scenario in event poll empty limit; do

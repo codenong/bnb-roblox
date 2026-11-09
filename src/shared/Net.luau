@@ -2,7 +2,9 @@
 -- Remote protocol for BnB. Server calls Net.init() once before use; client uses
 -- Net.get() after the folder replicates.
 --
--- Input        C->S RemoteEvent      dirs: {string}        oldest press first, newest last
+-- Input        C->S RemoteEvent      {seq, roundId, dirs} 30Hz sequenced commands;
+--                                    dirs is oldest press first, newest last.
+--                                    Server buffers ~2 ticks and acks through Snapshot.
 -- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
 -- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
 -- SelectColor  C->S RemoteEvent      "red" | "blue" | ... waiting phase only,

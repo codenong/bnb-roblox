@@ -10,12 +10,12 @@ local Map = require(script.Parent.Map)
 local Characters = require(script.Parent.Characters)
 local Mounts = require(script.Parent.Mounts)
 local Flame = require(script.Parent.Flame)
+local Movement = require(script.Parent.Movement)
 
 local TILE = Constants.TILE
 local COLS = Constants.COLS
 local ROWS = Constants.ROWS
 local HALF = Constants.HALF
-local ASSIST_RANGE = Constants.ASSIST_RANGE
 local DIRS4 = Constants.DIRS4
 local DIR_VEC = Constants.DIR_VEC
 
@@ -106,6 +106,9 @@ function Game.new(playerDefs, opts)
             x = spawn[1] * TILE + TILE / 2,
             y = spawn[2] * TILE + TILE / 2,
             dirs = {},
+            -- Last sequenced input command the server applied for this player.
+            -- Snapshots carry it back so the client can replay only newer input.
+            ack = 0,
             speed = char.speed,
             maxBombs = char.bombs,
             range = char.range,
@@ -143,7 +146,7 @@ function Game:gridRows()
     return Grid.gridToRows(self.grid)
 end
 
-function Game:setInput(id: string, dirs)
+function Game:setInput(id: string, dirs, seq: number?)
     local player = self.players[id]
     if not player then
         return
@@ -163,6 +166,9 @@ function Game:setInput(id: string, dirs)
         filtered = tail
     end
     player.dirs = filtered
+    if type(seq) == "number" then
+        player.ack = seq
+    end
 end
 
 function Game:bombAt(tx: number, ty: number)
@@ -290,125 +296,34 @@ function Game:overlapsTile(player, tx: number, ty: number): boolean
         and player.y - HALF < ty * TILE + TILE
 end
 
+-- Movement itself lives in the shared Movement module so client prediction runs
+-- exactly the same collision and corner-assist code as the server. These
+-- wrappers keep the existing Game-facing API used by tests and other modules.
 function Game:solidFor(tx: number, ty: number, player): boolean
-    if tx < 0 or ty < 0 or tx >= COLS or ty >= ROWS then
-        return true
-    end
-    local tile = self.grid[ty][tx]
-    if tile ~= EMPTY then
-        local border = tx == 0 or ty == 0 or tx == COLS - 1 or ty == ROWS - 1
-        if not (player.mount == "ufo" and not border) then
-            return true
-        end
-    end
-    for _, slide in ipairs(self.crateSlides) do
-        if slide.tx == tx and slide.ty == ty then
-            return true
-        end
-    end
-    local bomb = self:bombAt(tx, ty)
-    if bomb and not bomb.pass[player.id] then
-        return true
-    end
-    return false
+    return Movement.solidFor(self, tx, ty, player)
 end
 
 function Game:collides(player, x: number, y: number): boolean
-    local x0 = math.floor((x - HALF) / TILE)
-    local x1 = math.floor((x + HALF - 0.01) / TILE)
-    local y0 = math.floor((y - HALF) / TILE)
-    local y1 = math.floor((y + HALF - 0.01) / TILE)
-    for ty = y0, y1 do
-        for tx = x0, x1 do
-            if self:solidFor(tx, ty, player) then
-                return true
-            end
-        end
-    end
-    return false
+    return Movement.collides(self, player, x, y)
 end
 
 function Game:tryMove(player, dx: number, dy: number): boolean
-    local nx = player.x + dx
-    local ny = player.y + dy
-    if not self:collides(player, nx, ny) then
-        player.x = nx
-        player.y = ny
-        return true
-    end
-    return false
+    return Movement.tryMove(self, player, dx, dy)
 end
 
 function Game:effSpeed(player): number
-    if player.mount then
-        return Mounts.MOUNTS[player.mount].speed
-    end
-    return player.speed
+    return Movement.effSpeed(player)
 end
 
 function Game:movePlayer(player)
-    local dir = player.dirs[#player.dirs]
-    if not dir then
-        player.pushKey = nil
-        player.pushAcc = 0
-        return
-    end
-
-    local step = self:effSpeed(player) * Constants.DT
-    local dx, dy = 0, 0
-    if dir == "left" then
-        dx = -step
-    elseif dir == "right" then
-        dx = step
-    elseif dir == "up" then
-        dy = -step
-    elseif dir == "down" then
-        dy = step
-    end
-
-    if self:tryMove(player, dx, dy) then
-        player.pushKey = nil
-        player.pushAcc = 0
-        return
-    end
-
-    -- Corner assist: nudge toward the adjacent lane center, then retry.
-    if dx ~= 0 then
-        local center = math.floor(player.y / TILE) * TILE + TILE / 2
-        for _, cy in ipairs({ center, center - TILE, center + TILE }) do
-            local delta = cy - player.y
-            if delta ~= 0 and math.abs(delta) <= ASSIST_RANGE then
-                local shift = if math.abs(delta) <= step then delta else Grid.sign(delta) * step
-                if not self:collides(player, player.x, player.y + shift) then
-                    player.y += shift
-                    if self:tryMove(player, dx, 0) then
-                        player.pushKey = nil
-                        player.pushAcc = 0
-                    end
-                    return
-                end
-            end
-        end
-    else
-        local center = math.floor(player.x / TILE) * TILE + TILE / 2
-        for _, cx in ipairs({ center, center - TILE, center + TILE }) do
-            local delta = cx - player.x
-            if delta ~= 0 and math.abs(delta) <= ASSIST_RANGE then
-                local shift = if math.abs(delta) <= step then delta else Grid.sign(delta) * step
-                if not self:collides(player, player.x + shift, player.y) then
-                    player.x += shift
-                    if self:tryMove(player, 0, dy) then
-                        player.pushKey = nil
-                        player.pushAcc = 0
-                    end
-                    return
-                end
-            end
+    local status = Movement.step(self, player)
+    if status == "blocked" then
+        local dir = player.dirs[#player.dirs]
+        if dir then
+            self:tryKick(player, dir)
+            self:tryPush(player, dir)
         end
     end
-
-    self:tryKick(player, dir)
-    self:tryPush(player, dir)
 end
 
 function Game:frontTiles(player, dir)
@@ -984,6 +899,12 @@ function Game:snapshot(forceGrid: boolean?)
             id = player.id,
             x = math.floor(player.x + 0.5),
             y = math.floor(player.y + 0.5),
+            -- Sub-pixel authoritative position for client reconciliation. The
+            -- integer x/y stay for the existing renderer/tests.
+            fx = math.floor(player.x * 10 + 0.5) / 10,
+            fy = math.floor(player.y * 10 + 0.5) / 10,
+            -- Last command sequence applied by the server for this player.
+            ack = player.ack or 0,
             alive = player.alive,
             trapped = player.trapped,
             mount = player.mount,
@@ -997,6 +918,11 @@ function Game:snapshot(forceGrid: boolean?)
 
     local bombs = {}
     for _, bomb in ipairs(self.bombs) do
+        local pass = {}
+        for id in pairs(bomb.pass) do
+            table.insert(pass, id)
+        end
+        table.sort(pass)
         table.insert(bombs, {
             id = bomb.id,
             x = bomb.tx,
@@ -1006,6 +932,10 @@ function Game:snapshot(forceGrid: boolean?)
             fuse = bomb.fuse,
             remote = bomb.remote,
             owner = bomb.ownerId,
+            -- Players currently allowed to stand on this bomb. Client prediction
+            -- needs the same exception; otherwise it would stop at a bomb the
+            -- server lets the owner walk off.
+            pass = pass,
         })
     end
 

@@ -113,7 +113,7 @@ Stubs.Input = {
     end,
     setControlsVisible = function() end,
     getDirs = function()
-        return {}
+        return Env.dirs or {}
     end,
     placePressed = signal("placePressed"),
     usePressed = signal("usePressed"),
@@ -135,7 +135,17 @@ Stubs.Renderer = {
     setFlatMode = function(value)
         Env.rendererFlat = value == true
     end,
-    update = function() end,
+    update = function(previous, current, alpha, now, warmup, localPos)
+        Env.renderUpdate = {
+            previous = previous,
+            current = current,
+            alpha = alpha,
+            now = now,
+            warmup = warmup,
+            localPos = localPos,
+        }
+        Env.renderUpdateCount = (Env.renderUpdateCount or 0) + 1
+    end,
     clear = function() end,
 }
 
