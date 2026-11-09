@@ -135,6 +135,8 @@ function Input.setControlsVisible(visible: boolean)
     end
 end
 
+-- Physical gamepad dead zone. The touch joystick has its own, smaller radial
+-- dead zone below; do not lower this one just because a thumb needs less travel.
 local STICK_THRESHOLD = 0.35
 
 -- x is right-positive and y is up-positive. The game is strictly four-way, so
@@ -212,6 +214,29 @@ end
 
 ---------------------------------------------------------------- 触屏摇杆
 
+-- Touch uses a radial dead zone: 10% of the 54px travel is roughly 5-6px from
+-- the centre, so a small off-centre thumb push responds immediately. This is
+-- deliberately separate from the physical gamepad's 35% STICK_THRESHOLD.
+local TOUCH_STICK_DEADZONE = 0.10
+
+local function touchDirectionFromAxes(x: number, y: number): string?
+    local deadzone = TOUCH_STICK_DEADZONE
+    if x * x + y * y < deadzone * deadzone then
+        return nil
+    end
+
+    if math.abs(x) >= math.abs(y) then
+        if x >= 0 then
+            return "right"
+        end
+        return "left"
+    end
+    if y > 0 then
+        return "up"
+    end
+    return "down"
+end
+
 local function updateJoystick(position: Vector3)
     if not joystickBase then
         return
@@ -234,8 +259,8 @@ local function updateJoystick(position: Vector3)
         joystickKnob.BackgroundTransparency = 0.04
     end
 
-    -- Screen Y grows downward; directionFromAxes expects up-positive Y.
-    local direction = directionFromAxes(dx / travel, -dy / travel)
+    -- Screen Y grows downward; touchDirectionFromAxes expects up-positive Y.
+    local direction = touchDirectionFromAxes(dx / travel, -dy / travel)
     if direction ~= joystickDirection then
         joystickDirection = direction
         setSource(TOUCH_STICK_SOURCE, direction)

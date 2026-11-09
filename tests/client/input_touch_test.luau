@@ -74,8 +74,12 @@ check("dragging left moves left", dirs() == "left", dirs())
 drag(input, centerX, centerY + 40)
 check("dragging down moves down", dirs() == "down", dirs())
 
-drag(input, centerX + 10, centerY + 8)
-check("the centre dead zone stops movement", dirs() == "", dirs())
+drag(input, centerX + 2, centerY + 1)
+check("a tiny centre offset stays inside the 10% touch dead zone", dirs() == "", dirs())
+drag(input, centerX + 7, centerY)
+check("a small push just past 10% responds", dirs() == "right", dirs())
+drag(input, centerX + 4, centerY - 5)
+check("a small diagonal past 10% picks the dominant axis", dirs() == "up", dirs())
 drag(input, centerX + 15, centerY - 40)
 check("a mostly vertical drag picks up", dirs() == "up", dirs())
 drag(input, centerX + 40, centerY - 15)
@@ -97,6 +101,22 @@ check("release stops movement", dirs() == "", dirs())
 check("release recentres the knob",
     knob.Position.X.Offset == 0 and knob.Position.Y.Offset == 0,
     tostring(knob.Position.X.Offset) .. "," .. tostring(knob.Position.Y.Offset))
+
+-- The touch and physical gamepad dead zones are intentionally different. A
+-- 20% gamepad tilt is inside its 35% threshold even though touch responds at 10%.
+local gamepad = {
+    UserInputType = Enum.UserInputType.Gamepad1,
+    KeyCode = Enum.KeyCode.Thumbstick1,
+    Position = Vector3.new(0.2, 0, 0),
+}
+Env.fire("InputChanged", gamepad)
+check("the physical gamepad keeps its 35% dead zone", dirs() == "", dirs())
+gamepad.Position = Vector3.new(0.4, 0, 0)
+Env.fire("InputChanged", gamepad)
+check("the physical gamepad still moves past 35%", dirs() == "right", dirs())
+gamepad.Position = Vector3.new(0, 0, 0)
+Env.fire("InputChanged", gamepad)
+check("centring the gamepad clears its direction", dirs() == "", dirs())
 
 -- One movement touch owns the stick; a second finger must not steal it.
 local first = touchAt(centerX + 40, centerY)
