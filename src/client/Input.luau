@@ -308,11 +308,11 @@ local function createTouchControls(gui: ScreenGui)
     frame.Parent = gui
     controls = frame
 
-    -- Sized for a thumb: a 132px base with a 48px cap keeps the whole rocking
-    -- motion inside roughly a 38px radius, which is the comfortable arc of a
+    -- Sized for a thumb: a 106px base with a 40px cap keeps the whole rocking
+    -- motion inside roughly a 29px radius, which is the comfortable arc of a
     -- resting thumb instead of a full swipe across the lower screen.
-    local baseSize = 132
-    local knobSize = 48
+    local baseSize = 106
+    local knobSize = 40
     local margin = 24
 
     local base = Instance.new("Frame")

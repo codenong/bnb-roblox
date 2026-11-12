@@ -37,9 +37,9 @@ check("touch controls can be shown", controls.Visible == true)
 -- The base is anchored bottom-left at (24, H-24); this is what Roblox would
 -- report through AbsolutePosition/AbsoluteSize while the joystick is visible.
 joystick.AbsolutePosition = Vector2.new(24, 400)
-joystick.AbsoluteSize = Vector2.new(132, 132)
-local centerX = 24 + 132 / 2
-local centerY = 400 + 132 / 2
+joystick.AbsoluteSize = Vector2.new(106, 106)
+local centerX = 24 + 106 / 2
+local centerY = 400 + 106 / 2
 
 local function touchAt(x: number, y: number)
     return {
@@ -74,7 +74,9 @@ check("dragging left moves left", dirs() == "left", dirs())
 drag(input, centerX, centerY + 40)
 check("dragging down moves down", dirs() == "down", dirs())
 
-drag(input, centerX + 1, centerY + 1)
+-- Travel is 29px (106/2 - 40/2 - 4), so the 4% radial dead zone has a radius
+-- of ~1.16px: a 1px push (≈3.4%) stays silent, 2px (≈6.9%) responds.
+drag(input, centerX + 1, centerY)
 check("a tiny centre offset stays inside the 4% touch dead zone", dirs() == "", dirs())
 drag(input, centerX + 2, centerY)
 check("a small push just past 4% responds", dirs() == "right", dirs())
@@ -91,7 +93,7 @@ local far = touchAt(centerX, centerY - 300)
 release(input)
 begin(far)
 check("holding past the top edge moves up", dirs() == "up", dirs())
-check("the knob pins at the top edge", TestLib.near(knob.Position.Y.Offset, -38, 0.001), knob.Position.Y.Offset)
+check("the knob pins at the top edge", TestLib.near(knob.Position.Y.Offset, -29, 0.001), knob.Position.Y.Offset)
 surface.InputEnded:Fire(far)
 check("the GUI losing the touch does not stop the stick", dirs() == "up", dirs())
 drag(far, centerX, centerY - 500)
