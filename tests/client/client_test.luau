@@ -664,6 +664,271 @@ do
             and rendered.localPos.y == 60,
         rendered and rendered.localPos and rendered.localPos.x)
 
+    ------------------------------------------------------------------ 有序放泡泡与音效
+    Env.audioPlays = {}
+    Env.audioFx = {}
+    Env.dirs = nil
+    -- Same round, now advertising the ordered placement capability.
+    fire("RoundState", {
+        phase = "playing",
+        roomId = 9,
+        roundId = 500,
+        roster = {},
+        yourId = "u1",
+        grid = rows,
+        placeSequenced = true,
+    })
+
+    local actionRemote = Env.remotes.Action
+    local actionBefore = #(actionRemote.sent or {})
+    local scanFrom = #inputRemote.sent
+    local function newPlacePayloads(fromIndex)
+        local found = {}
+        for i = fromIndex + 1, #inputRemote.sent do
+            local payload = inputRemote.sent[i][1]
+            if type(payload) == "table" and payload.place == true then
+                table.insert(found, payload)
+            end
+        end
+        return found
+    end
+
+    Env.signals.placePressed()
+    local placePayload = nil
+    for _ = 1, 4 do
+        Env.renderStepped(1 / 60)
+        local found = newPlacePayloads(scanFrom)
+        if found[1] then
+            placePayload = found[1]
+            break
+        end
+    end
+    check("a place press rides in the next ordered command", placePayload ~= nil)
+    check("the place press is not sent as a legacy action",
+        #(actionRemote.sent or {}) == actionBefore)
+    check("the local bomb plays the set sound once", #Env.audioPlays == 1
+        and Env.audioPlays[1] == "bomb_set", #Env.audioPlays)
+
+    -- The renderer receives the predicted bomb separately from the snapshot.
+    Env.renderStepped(1 / 60)
+    local renderedPlace = Env.renderUpdate
+    check("the predicted bomb is passed to the renderer",
+        renderedPlace and renderedPlace.predictedBombs
+            and #renderedPlace.predictedBombs == 1,
+        renderedPlace and renderedPlace.predictedBombs
+            and #renderedPlace.predictedBombs)
+    check("the predicted bomb has the ordered id",
+        renderedPlace and renderedPlace.predictedBombs
+            and renderedPlace.predictedBombs[1].id == "p" .. tostring(placePayload.seq))
+    check("the snapshot bombs list is not modified",
+        renderedPlace and renderedPlace.current
+            and #(renderedPlace.current.bombs or {}) == 0)
+    check("only the command that consumed the press carries place",
+        #newPlacePayloads(scanFrom) == 1, #newPlacePayloads(scanFrom))
+    local placeSeq = placePayload.seq
+
+    -- Confirmation arrives before the Fx event: the removal must not drop the
+    -- pending sound suppression.
+    fire("Snapshot", {
+        players = {
+            {
+                id = "u1",
+                x = 60,
+                y = 60,
+                fx = 60,
+                fy = 60,
+                ack = placeSeq,
+                alive = true,
+                trapped = false,
+                speed = 144,
+                maxBombs = 1,
+            },
+        },
+        bombs = {
+            {
+                id = 100,
+                x = 1,
+                y = 1,
+                sx = 60,
+                sy = 60,
+                fuse = 75,
+                remote = false,
+                owner = "u1",
+                seq = placeSeq,
+                pass = { "u1" },
+            },
+        },
+        crateSlides = {},
+    })
+    frame()
+    check("confirmation removes the predicted bomb from the renderer",
+        Env.renderUpdate and Env.renderUpdate.predictedBombs
+            and #Env.renderUpdate.predictedBombs == 0)
+    local fxBefore = #Env.audioFx
+    fire("Fx", { kind = "bomb_set", ownerId = "u1", seq = placeSeq })
+    check("a server sound for an already-confirmed prediction is suppressed",
+        #Env.audioFx == fxBefore, #Env.audioFx - fxBefore)
+    fire("Fx", { kind = "bomb_set", ownerId = "u2", seq = placeSeq })
+    fire("Fx", { kind = "bomb_set", ownerId = "u1" })
+    check("other players' and unsequenced sounds still reach Audio.onFx",
+        #Env.audioFx == fxBefore + 2, #Env.audioFx - fxBefore)
+
+    -- Move the local player off the confirmed bomb, then place again and let the
+    -- Fx arrive first. The confirmation afterwards must still clean up.
+    scanFrom = #inputRemote.sent
+    fire("Snapshot", {
+        players = {
+            {
+                id = "u1",
+                x = 140,
+                y = 60,
+                fx = 140,
+                fy = 60,
+                ack = placeSeq,
+                alive = true,
+                trapped = false,
+                speed = 144,
+                maxBombs = 1,
+            },
+        },
+        bombs = {},
+        crateSlides = {},
+    })
+    Env.dirs = nil
+    Env.signals.placePressed()
+    local secondPlace = nil
+    for _ = 1, 4 do
+        Env.renderStepped(1 / 60)
+        local found = newPlacePayloads(scanFrom)
+        if found[1] then
+            secondPlace = found[1]
+            break
+        end
+    end
+    check("a second placement is ordered", secondPlace ~= nil)
+    check("the second local bomb plays one more sound", #Env.audioPlays == 2)
+    fxBefore = #Env.audioFx
+    fire("Fx", { kind = "bomb_set", ownerId = "u1", seq = secondPlace.seq })
+    check("an early server sound for a live prediction is suppressed",
+        #Env.audioFx == fxBefore)
+    fire("Snapshot", {
+        players = {
+            {
+                id = "u1",
+                x = 140,
+                y = 60,
+                fx = 140,
+                fy = 60,
+                ack = secondPlace.seq,
+                alive = true,
+                trapped = false,
+                speed = 144,
+                maxBombs = 1,
+            },
+        },
+        bombs = {
+            {
+                id = 101,
+                x = 3,
+                y = 1,
+                sx = 140,
+                sy = 60,
+                fuse = 75,
+                remote = false,
+                owner = "u1",
+                seq = secondPlace.seq,
+                pass = { "u1" },
+            },
+        },
+        crateSlides = {},
+    })
+    frame()
+    check("the second confirmation clears the predicted list",
+        Env.renderUpdate and Env.renderUpdate.predictedBombs
+            and #Env.renderUpdate.predictedBombs == 0)
+
+    -- Old servers do not advertise placeSequenced: use the immediate Action.
+    fire("RoundState", {
+        phase = "playing",
+        roomId = 9,
+        roundId = 500,
+        roster = {},
+        yourId = "u1",
+        grid = rows,
+    })
+    local actionCount = #(actionRemote.sent or {})
+    scanFrom = #inputRemote.sent
+    Env.signals.placePressed()
+    check("the legacy server gets the immediate place action",
+        #(actionRemote.sent or {}) == actionCount + 1)
+    local legacyAction = actionRemote.sent[#actionRemote.sent]
+    check("the legacy action is the old place string", legacyAction and legacyAction[1] == "place")
+    for _ = 1, 3 do
+        Env.renderStepped(1 / 60)
+    end
+    check("the legacy path never sets a pending ordered place",
+        #newPlacePayloads(scanFrom) == 0)
+
+    -- A press that has not been consumed must not survive leaving the room.
+    fire("RoundState", {
+        phase = "playing",
+        roomId = 9,
+        roundId = 500,
+        roster = {},
+        yourId = "u1",
+        grid = rows,
+        placeSequenced = true,
+    })
+    Env.signals.placePressed()
+    check("the pending press does not fire an action on a capable server",
+        #(actionRemote.sent or {}) == actionCount + 1)
+    Env.invokeResponses.LeaveTable = function()
+        return { ok = true }
+    end
+    Env.signals.lobbyRequested()
+
+    -- Rejoin and make sure the consumed/cleared press cannot leak into the new
+    -- round's first command.
+    Env.invokeResponses.JoinTable = function()
+        return { ok = true, roomId = 10 }
+    end
+    Env.syncResponse = {
+        phase = "playing",
+        roomId = 10,
+        roundId = 501,
+        roster = {},
+        yourId = "u1",
+        grid = rows,
+        placeSequenced = true,
+        snapshot = {
+            grid = rows,
+            warmup = 0,
+            tick = 1,
+            players = {
+                {
+                    id = "u1",
+                    x = 60,
+                    y = 60,
+                    fx = 60,
+                    fy = 60,
+                    ack = 0,
+                    alive = true,
+                    trapped = false,
+                    speed = 144,
+                },
+            },
+            bombs = {},
+            crateSlides = {},
+        },
+    }
+    scanFrom = #inputRemote.sent
+    Env.signals.tableSelected("practice")
+    Env.renderStepped(1 / 60)
+    local afterRejoin = inputRemote.sent[#inputRemote.sent][1]
+    check("leaving clears a pending place before the next round",
+        afterRejoin and afterRejoin.place == nil)
+    check("the next round can still send commands", #inputRemote.sent > scanFrom)
+
     -- The server snapshot is still authoritative for everyone else; the local
     -- override must disappear as soon as the player leaves the room.
     Env.invokeResponses.LeaveTable = function()

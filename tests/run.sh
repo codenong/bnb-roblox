@@ -65,6 +65,14 @@ for name in MatchService PlayerService Room SnapshotService VersusStats ShopServ
   } > "$MATCH_BUILD/$name.luau"
 done
 cp ../src/server/ShopConfig.luau "$MATCH_BUILD/ShopConfig.luau"
+# The real client predictor is also loaded into the match build for frame-by-
+# frame differential and network reconciliation tests.
+{
+  printf 'local __env = require("./TestEnv")\n'
+  printf 'local game = __env.game\n'
+  sed -E 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
+    ../src/client/Prediction.luau
+} > "$MATCH_BUILD/Prediction.luau"
 cp match/TestEnv.luau "$MATCH_BUILD/TestEnv.luau"
 cp match/StubBotService.luau "$MATCH_BUILD/BotService.luau"
 cp match/StubNet.luau "$MATCH_BUILD/Net.luau"
@@ -80,6 +88,9 @@ cp match/shop_settlement_test.luau "$MATCH_BUILD/"
 cp match/shop_auto_carry_test.luau "$MATCH_BUILD/"
 cp match/shop_exit_test.luau "$MATCH_BUILD/"
 cp match/input_buffer_test.luau "$MATCH_BUILD/"
+cp match/place_command_test.luau "$MATCH_BUILD/"
+cp match/prediction_differential_test.luau "$MATCH_BUILD/"
+cp match/prediction_network_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
 
 echo "== match_test.luau (room manager, stubbed server)"
@@ -106,6 +117,12 @@ echo "== shop_service_test.luau (receipts, durability, direct store path)"
 "$LUAU" "$MATCH_BUILD/shop_service_test.luau"
 echo "== input_buffer_test.luau (sequenced input, 2-tick buffer, acks, snapshot fields)"
 "$LUAU" "$MATCH_BUILD/input_buffer_test.luau"
+echo "== place_command_test.luau (ordered placement, pre-move tile, Fx seq, legacy action)"
+"$LUAU" "$MATCH_BUILD/place_command_test.luau"
+echo "== prediction_differential_test.luau (Game vs Prediction frame-by-frame, placement alignment)"
+"$LUAU" "$MATCH_BUILD/prediction_differential_test.luau"
+echo "== prediction_network_test.luau (latency + jitter convergence, ordered placement)"
+"$LUAU" "$MATCH_BUILD/prediction_network_test.luau"
 
 # --- client entry: the real Main.client.luau with stubbed UI modules and remotes ---
 CLIENT_BUILD=build/client

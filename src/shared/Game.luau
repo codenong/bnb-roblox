@@ -146,7 +146,7 @@ function Game:gridRows()
     return Grid.gridToRows(self.grid)
 end
 
-function Game:setInput(id: string, dirs, seq: number?)
+function Game:setInput(id: string, dirs, seq: number?, place: boolean?)
     local player = self.players[id]
     if not player then
         return
@@ -168,6 +168,12 @@ function Game:setInput(id: string, dirs, seq: number?)
     player.dirs = filtered
     if type(seq) == "number" then
         player.ack = seq
+    end
+    -- Ordered placement: the command tick itself is the authority. This runs
+    -- before Game:tick moves the player, matching the client's pre-step shadow.
+    -- A rejected placement still advances the ack above.
+    if place == true then
+        self:placeBomb(id, false, seq)
     end
 end
 
@@ -195,7 +201,7 @@ function Game:detonate(id: string): boolean
     return any
 end
 
-function Game:placeBomb(id: string, remote: boolean?): boolean
+function Game:placeBomb(id: string, remote: boolean?, seq: number?): boolean
     local player = self.players[id]
     if not player or not player.alive or player.trapped or self.over or self.warmup > 0 then
         return false
@@ -231,6 +237,9 @@ function Game:placeBomb(id: string, remote: boolean?): boolean
     self._bombSeq += 1
     local bomb = {
         id = self._bombSeq,
+        -- Command sequence that created this bomb. It survives kicks/slides and
+        -- lets the placing client confirm its locally predicted bomb.
+        seq = if not remote and type(seq) == "number" then seq else nil,
         tx = tx,
         ty = ty,
         range = player.range,
@@ -932,6 +941,7 @@ function Game:snapshot(forceGrid: boolean?)
             fuse = bomb.fuse,
             remote = bomb.remote,
             owner = bomb.ownerId,
+            seq = bomb.seq,
             -- Players currently allowed to stand on this bomb. Client prediction
             -- needs the same exception; otherwise it would stop at a bomb the
             -- server lets the owner walk off.

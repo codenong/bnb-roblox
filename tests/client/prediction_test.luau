@@ -284,6 +284,226 @@ do
     check("a sliding crate blocks prediction", slideX <= 2 * TILE, slideX)
 end
 
+---------------------------------------------------------------- 放泡泡预测
+
+do
+    local pred = Prediction.new()
+    pred:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    local active, made = pred:step(1, { "right" }, 1, true)
+    check("an active prediction accepts a placement command", active == true)
+    check("placement reports that a local bomb was created", made == true)
+
+    local bombs = pred:getPredictedBombs()
+    check("the predicted bomb is exposed to the renderer", #bombs == 1, #bombs)
+    check("the predicted bomb array is stable", pred:getPredictedBombs() == bombs)
+    local bomb = bombs[1]
+    check("the predicted bomb has a string id", bomb and bomb.id == "p1", bomb and bomb.id)
+    check("the bomb uses the pre-move tile", bomb and bomb.tx == 1 and bomb.ty == 1,
+        bomb and (tostring(bomb.tx) .. "," .. tostring(bomb.ty)))
+    check("the bomb carries its ordered sequence", bomb and bomb.seq == 1)
+    check("the bomb is centred on the tile", bomb and near(bomb.sx, 60) and near(bomb.sy, 60),
+        bomb and (tostring(bomb.sx) .. "," .. tostring(bomb.sy)))
+    check("the bomb starts with a full fuse", bomb and bomb.fuse == Constants.BOMB_FUSE_TICKS)
+    check("the bomb is owned by the local player", bomb and bomb.owner == "u1")
+    check("the predicted bomb is not remote", bomb and bomb.remote == false)
+    check("the owner can stand on the predicted bomb", bomb and bomb.pass["u1"] == true)
+
+    local _, second = pred:step(2, { "right" }, 1 + DT, false)
+    check("a command without place creates nothing", second == false and #bombs == 1)
+end
+
+---------------------------------------------------------------- 本地拒绝明显的非法放置
+
+do
+    -- Same tile: the first prediction is still there.
+    local pred = Prediction.new()
+    pred:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    check("the first placement is predicted", select(2, pred:step(1, {}, 1, true)) == true)
+    check("a second bomb on the same tile is refused locally",
+        select(2, pred:step(2, {}, 1 + DT, true)) == false)
+    check("the refusal did not add a bomb", #pred:getPredictedBombs() == 1)
+
+    -- Bomb/stock cap: walk out of the first bomb's tile, then try again.
+    local capped = Prediction.new()
+    capped:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    capped:step(1, {}, 1, true)
+    for i = 2, 12 do
+        capped:step(i, { "right" }, 1 + (i - 1) * DT)
+    end
+    check("the prediction walked off its own bomb", capped:getTargetPosition() > 2 * TILE)
+    check("the max-bomb limit refuses another local placement",
+        select(2, capped:step(13, { "right" }, 1 + 12 * DT, true)) == false)
+    check("no extra bomb was predicted", #capped:getPredictedBombs() == 1)
+
+    -- A remote bomb is already out: Game detonates instead of placing.
+    local remote = Prediction.new()
+    remote:onSnapshot(
+        snapshot({
+            grid = emptyRows(),
+            players = { playerData("u1", 60, 60, { maxBombs = 2 }) },
+            bombs = {
+                {
+                    id = 9,
+                    x = 3,
+                    y = 1,
+                    sx = 140,
+                    sy = 60,
+                    fuse = 9999,
+                    remote = true,
+                    owner = "u1",
+                    pass = {},
+                },
+            },
+        }),
+        "u1",
+        1
+    )
+    check("a placement with a remote out is refused locally",
+        select(2, remote:step(1, {}, 1, true)) == false)
+    check("no normal bomb was predicted", #remote:getPredictedBombs() == 0)
+
+    -- Trapped/warmup states do not predict at all.
+    local inactive = Prediction.new()
+    inactive:onSnapshot(snapshot({ grid = emptyRows(), warmup = 10 }), "u1", 1)
+    check("inactive prediction does not accept a placement",
+        select(2, inactive:step(1, {}, 1, true)) == false)
+    check("inactive prediction has no bombs", #inactive:getPredictedBombs() == 0)
+end
+
+---------------------------------------------------------------- 预测泡泡的 pass 与碰撞
+
+do
+    local pred = Prediction.new()
+    pred:onSnapshot(
+        snapshot({ grid = corridorRows(), players = { playerData("u1", 60, 60) } }),
+        "u1",
+        1
+    )
+    pred:step(1, {}, 1, true)
+    local bomb = pred:getPredictedBombs()[1]
+    check("the bomb starts with an owner pass", bomb and bomb.pass["u1"] == true)
+
+    -- Walk right until the owner no longer overlaps the bomb tile.
+    for i = 2, 13 do
+        pred:step(i, { "right" }, 1 + (i - 1) * DT)
+    end
+    check("leaving the bomb tile removes the pass", bomb and bomb.pass["u1"] == nil)
+
+    -- Walking back must stop at the bomb instead of passing through it.
+    for i = 14, 26 do
+        pred:step(i, { "left" }, 1 + (i - 1) * DT)
+    end
+    local x = pred:getTargetPosition()
+    check("re-entering the bomb tile is blocked", x > 90, x)
+end
+
+---------------------------------------------------------------- 服务器确认 / 拒绝 / TTL
+
+do
+    -- Confirmation is by owner+seq; the bomb may have been kicked to a new tile.
+    local pred = Prediction.new()
+    pred:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    pred:step(5, {}, 1, true)
+    pred:onSnapshot(
+        snapshot({
+            players = { playerData("u1", 60, 60, { ack = 5 }) },
+            bombs = {
+                { id = 21, x = 7, y = 7, sx = 300, sy = 300, fuse = 74, remote = false, owner = "u1", seq = 5, pass = {} },
+            },
+        }),
+        "u1",
+        2
+    )
+    check("a server bomb with the same owner+seq confirms the prediction",
+        #pred:getPredictedBombs() == 0)
+
+    -- The local sound is suppressed once, even after confirmation.
+    check("a queued server sound can still be consumed after confirmation",
+        pred:consumePlaceFx(5) == true)
+    check("the suppression entry is removed after use", pred:consumePlaceFx(5) == false)
+
+    -- Ack covers the command but no bomb exists: the server rejected it.
+    local rejected = Prediction.new()
+    rejected:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    rejected:step(3, {}, 1, true)
+    rejected:onSnapshot(
+        snapshot({ players = { playerData("u1", 60, 60, { ack = 2 }) } }),
+        "u1",
+        2
+    )
+    check("an unacknowledged prediction with no match is kept",
+        #rejected:getPredictedBombs() == 1)
+    rejected:onSnapshot(
+        snapshot({ players = { playerData("u1", 60, 60, { ack = 3 }) } }),
+        "u1",
+        3
+    )
+    check("an acked prediction without a matching bomb is rejected",
+        #rejected:getPredictedBombs() == 0)
+
+    -- A stale snapshot must neither clear nor roll back the prediction.
+    local stale = Prediction.new()
+    stale:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    stale:step(4, {}, 1, true)
+    stale:onSnapshot(
+        snapshot({ players = { playerData("u1", 60, 60, { ack = 3 }) } }),
+        "u1",
+        2
+    )
+    stale:onSnapshot(
+        snapshot({ players = { playerData("u1", 60, 60, { ack = 2 }) } }),
+        "u1",
+        3
+    )
+    check("an older ack snapshot does not drop a newer prediction",
+        #stale:getPredictedBombs() == 1 and stale:getAck() == 3)
+
+    -- TTL fallback for a server that never answers this sequence.
+    local ttl = Prediction.new()
+    ttl:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    ttl:step(1, {}, 1, true)
+    ttl:onSnapshot(snapshot({ players = { playerData("u1", 60, 60, { ack = 0 }) } }), "u1", 5)
+    check("an unanswered prediction expires after its TTL",
+        #ttl:getPredictedBombs() == 0)
+
+    -- reset clears predictions and pending sound suppression.
+    local reset = Prediction.new()
+    reset:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    reset:step(1, {}, 1, true)
+    reset:reset()
+    check("reset clears predicted bombs", #reset:getPredictedBombs() == 0)
+    check("reset clears pending sound suppression", reset:consumePlaceFx(1) == false)
+end
+
+---------------------------------------------------------------- 按 sequence 回放注入
+
+do
+    -- Ten commands move the player two tiles right, then seq 11 places. On a
+    -- snapshot that has applied none of them, the bomb must only enter the world
+    -- when seq 11 is replayed. Injecting it up front would block the earlier
+    -- movement that the server already performed.
+    local pred = Prediction.new()
+    pred:onSnapshot(snapshot({ grid = emptyRows() }), "u1", 1)
+    for i = 1, 10 do
+        pred:step(i, { "right" }, 1 + i * DT)
+    end
+    pred:step(11, { "right" }, 1 + 11 * DT, true)
+    local bomb = pred:getPredictedBombs()[1]
+    check("the test bomb is on the tile reached by the earlier commands",
+        bomb and bomb.tx == 2 and bomb.ty == 1, bomb and tostring(bomb.tx))
+
+    pred:onSnapshot(
+        snapshot({ players = { playerData("u1", 60, 60, { ack = 0 }) }, bombs = {} }),
+        "u1",
+        1 + 11 * DT
+    )
+    local x, y = pred:getTargetPosition()
+    check("replay reaches the same position as the ordered placement",
+        near(x, 60 + 11 * STEP, 0.11) and near(y, 60, 0.11),
+        tostring(x) .. "," .. tostring(y))
+    check("the bomb survived the replay", #pred:getPredictedBombs() == 1)
+end
+
 ---------------------------------------------------------------- reset
 
 do

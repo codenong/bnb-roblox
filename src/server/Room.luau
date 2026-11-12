@@ -389,6 +389,10 @@ function Room:_buildState(record)
         inventory = if record then Shop.inventorySummary(record.profile, self.mode) else nil,
         spectating = true,
         charLocked = self:isCharLocked(),
+        -- New capability: placement can travel inside the sequenced input
+        -- command and is applied on that command's tick. Old clients ignore it;
+        -- new clients fall back to Action "place" when it is absent.
+        placeSequenced = true,
         roomId = self.id,
         mode = self.mode,
         practice = self.mode == "practice",
@@ -586,15 +590,17 @@ function Room:collectFx()
 
     local events = {}
 
-    local newBomb = false
+    -- One event per bomb so the placing client can suppress only the sound of
+    -- its own predicted placement, keyed by the ordered command sequence.
     for _, bomb in ipairs(self.game.bombs) do
         if not self.fxState.bombs[bomb.id] then
             self.fxState.bombs[bomb.id] = true
-            newBomb = true
+            local event = { kind = "bomb_set", ownerId = bomb.ownerId }
+            if type(bomb.seq) == "number" then
+                event.seq = bomb.seq
+            end
+            table.insert(events, event)
         end
-    end
-    if newBomb then
-        table.insert(events, { kind = "bomb_set" })
     end
 
     local currentExplosions = {}
@@ -658,7 +664,7 @@ function Room:_applyInputCommands()
                 or command.wait >= Constants.INPUT_BUFFER_TICKS
             then
                 table.remove(state.queue, 1)
-                self.game:setInput(id, command.dirs, command.seq)
+                self.game:setInput(id, command.dirs, command.seq, command.place)
             end
         end
     end
@@ -1048,6 +1054,9 @@ function Room:setInput(record, payload)
     if type(dirs) ~= "table" then
         return
     end
+    -- A placement request is only meaningful inside the sequenced envelope and
+    -- only as a boolean. Old array payloads never place through this path.
+    local place = sequenced and payload.place == true
 
     -- Accept at most four unique legal directions in press order. Game uses
     -- the last entry as the most recently pressed direction.
@@ -1101,11 +1110,11 @@ function Room:setInput(record, payload)
     end
     state.lastQueued = seq
 
-    if participant.alive and #clean > 0 then
+    if participant.alive and (#clean > 0 or place) then
         self.roundActivity[record.id] = true
     end
 
-    table.insert(state.queue, { seq = seq, dirs = clean })
+    table.insert(state.queue, { seq = seq, dirs = clean, place = place })
     if #state.queue > Constants.INPUT_QUEUE_LIMIT then
         table.remove(state.queue, 1)
     end

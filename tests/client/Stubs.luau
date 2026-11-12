@@ -121,7 +121,14 @@ Stubs.Input = {
 
 Stubs.Audio = {
     init = function() end,
-    onFx = function() end,
+    play = function(name)
+        Env.audioPlays = Env.audioPlays or {}
+        table.insert(Env.audioPlays, name)
+    end,
+    onFx = function(event)
+        Env.audioFx = Env.audioFx or {}
+        table.insert(Env.audioFx, event)
+    end,
     playResult = function() end,
     toggleMuted = function()
         return false
@@ -135,7 +142,7 @@ Stubs.Renderer = {
     setFlatMode = function(value)
         Env.rendererFlat = value == true
     end,
-    update = function(previous, current, alpha, now, warmup, localPos)
+    update = function(previous, current, alpha, now, warmup, localPos, predictedBombs)
         Env.renderUpdate = {
             previous = previous,
             current = current,
@@ -143,6 +150,7 @@ Stubs.Renderer = {
             now = now,
             warmup = warmup,
             localPos = localPos,
+            predictedBombs = predictedBombs,
         }
         Env.renderUpdateCount = (Env.renderUpdateCount or 0) + 1
     end,

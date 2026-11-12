@@ -800,13 +800,24 @@ local function updateItems(items, now)
     sweep(itemPool, seen)
 end
 
-local function updateBombs(bombs, now)
+-- Predicted bombs use string ids ("p" .. seq), so they never collide with the
+-- server's numeric ids. A confirmed prediction is removed and the server bomb
+-- added in the same snapshot, which just swaps the pool key.
+local function updateBombs(bombs, now, predictedBombs)
     local seen = {}
     for _, bomb in ipairs(bombs or {}) do
         local key = tostring(bomb.id or string.format("%s:%d:%d", tostring(bomb.owner), bomb.x, bomb.y))
         seen[key] = true
         local unit = acquire(bombPool, key, createBombUnit)
         updateBombUnit(unit, bomb, now)
+    end
+    for _, bomb in ipairs(predictedBombs or {}) do
+        local key = tostring(bomb.id)
+        if not seen[key] then
+            seen[key] = true
+            local unit = acquire(bombPool, key, createBombUnit)
+            updateBombUnit(unit, bomb, now)
+        end
     end
     sweep(bombPool, seen)
 end
@@ -997,8 +1008,9 @@ end
 
 -- localPos is an optional {id, x, y} override for the local player only. It is
 -- the predicted position from Prediction; when nil every player interpolates
--- from snapshots exactly as before.
-function Renderer.update(previous, current, alpha, now, warmup, localPos)
+-- from snapshots exactly as before. predictedBombs is a read-only list owned by
+-- Prediction and drawn on top of the snapshot bombs.
+function Renderer.update(previous, current, alpha, now, warmup, localPos, predictedBombs)
     if not current then
         updateDeaths(now)
         return
@@ -1023,7 +1035,7 @@ function Renderer.update(previous, current, alpha, now, warmup, localPos)
         localPos
     )
     updateItems(current.items or {}, now)
-    updateBombs(current.bombs or {}, now)
+    updateBombs(current.bombs or {}, now, predictedBombs)
     updateExplosions(current.expl or {}, now)
     updateLoot(current.loot or {}, now)
     updateSlides(current.crateSlides or {}, now)

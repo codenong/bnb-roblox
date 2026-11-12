@@ -109,6 +109,9 @@ local inputStarted = false
 -- has no room for this player then, so a stale RoundState already in flight must
 -- not close the browser or make the board look like a live round.
 local browsing = false
+-- A placement press rides inside the next ordered input command. Cleared after
+-- that command (or whenever the round is left) so one press places one bomb.
+local pendingPlace = false
 
 local function setInputEnabled(enabled)
     Input.setEnabled(enabled)
@@ -119,6 +122,7 @@ local function resetVisibleRound()
     interp:reset()
     lastSnapshot = nil
     prediction:reset()
+    pendingPlace = false
     inputStarted = false
     inputAccumulator = 0
     Renderer.clear()
@@ -198,6 +202,7 @@ local function applyState(newState)
     setInputEnabled(playing)
     if not playing then
         prediction:reset()
+        pendingPlace = false
         inputStarted = false
         inputAccumulator = 0
     end
@@ -221,6 +226,18 @@ snapshotRemote.OnClientEvent:Connect(function(snapshot)
 end)
 
 fxRemote.OnClientEvent:Connect(function(event)
+    -- Our own sequenced placement already played locally the moment the
+    -- predicted bomb appeared. Fx and Snapshot are independent remotes, so the
+    -- confirmation can arrive in either order; the suppression survives it.
+    if type(event) == "table"
+        and event.kind == "bomb_set"
+        and currentState ~= nil
+        and event.ownerId == currentState.yourId
+        and type(event.seq) == "number"
+        and prediction:consumePlaceFx(event.seq)
+    then
+        return
+    end
     Audio.onFx(event)
 end)
 
@@ -255,7 +272,20 @@ Hud.mutePressed.Event:Connect(function()
 end)
 
 Input.placePressed.Event:Connect(function()
-    if currentState and currentState.phase == "playing" and currentState.yourId then
+    if not currentState or browsing
+        or currentState.phase ~= "playing"
+        or currentState.yourId == nil
+    then
+        return
+    end
+    if currentState.placeSequenced == true then
+        -- Tie the request to the next command's seq. The server places with the
+        -- same pre-move position the client used to predict, so no client tile
+        -- ever needs to be trusted. Prediction being inactive (trapped, warmup)
+        -- does not block the request; the server decides.
+        pendingPlace = true
+    else
+        -- Old server: keep the legacy immediate action so placing still works.
         actionRemote:FireServer("place")
     end
 end)
@@ -383,6 +413,7 @@ local function leaveToLobby(fetchInventory: boolean?)
     local wasBrowsing = browsing
     browsing = true
     prediction:reset()
+    pendingPlace = false
     inputStarted = false
     inputAccumulator = 0
     local ok, result = pcall(function()
@@ -548,18 +579,30 @@ RunService.RenderStepped:Connect(function(dt)
             sent += 1
             inputSeq += 1
             local dirs = Input.getDirs()
-            inputRemote:FireServer({
+            local place = pendingPlace and currentState.placeSequenced == true
+            pendingPlace = false
+            local payload = {
                 seq = inputSeq,
                 roundId = currentState.roundId,
                 dirs = dirs,
-            })
+            }
+            -- Omit the field entirely on ordinary commands; only a true boolean
+            -- ever requests a placement.
+            if place then
+                payload.place = true
+            end
+            inputRemote:FireServer(payload)
             -- The shadow advances on the same timeline as the command stream:
             -- one command, one 30Hz step, exactly like the server buffer.
-            prediction:step(inputSeq, dirs, now)
+            local _, placePredicted = prediction:step(inputSeq, dirs, now, place)
+            if placePredicted == true then
+                Audio.play("bomb_set")
+            end
         end
     else
         inputStarted = false
         inputAccumulator = 0
+        pendingPlace = false
     end
 
     local previous, current, alpha = interp:sample(now)
@@ -572,10 +615,11 @@ RunService.RenderStepped:Connect(function(dt)
         end
     end
 
+    local predictedBombs = if playing then prediction:getPredictedBombs() else nil
     if current then
         local warmup = current.warmup or 0
-        Renderer.update(previous, current, alpha, now, warmup, localPos)
+        Renderer.update(previous, current, alpha, now, warmup, localPos, predictedBombs)
     else
-        Renderer.update(nil, nil, 1, now, 0, localPos)
+        Renderer.update(nil, nil, 1, now, 0, localPos, predictedBombs)
     end
 end)

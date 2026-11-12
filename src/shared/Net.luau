@@ -2,17 +2,26 @@
 -- Remote protocol for BnB. Server calls Net.init() once before use; client uses
 -- Net.get() after the folder replicates.
 --
--- Input        C->S RemoteEvent      {seq, roundId, dirs} 30Hz sequenced commands;
---                                    dirs is oldest press first, newest last.
+-- Input        C->S RemoteEvent      {seq, roundId, dirs, place?} 30Hz sequenced
+--                                    commands; dirs is oldest press first, newest
+--                                    last. Only place == true requests placement,
+--                                    applied on that command's tick before movement
+--                                    (same pre-move tile as client prediction).
 --                                    Server buffers ~2 ticks and acks through Snapshot.
--- Action       C->S RemoteEvent      "place" | "use"      place also detonates remotes
+-- Action       C->S RemoteEvent      "place" | "use"      place is the legacy
+--                                    immediate fallback for servers without
+--                                    RoundState.placeSequenced; use stays immediate.
 -- SelectChar   C->S RemoteEvent      "baobao" | "haidao"  waiting phase only
 -- SelectColor  C->S RemoteEvent      "red" | "blue" | ... waiting phase only,
 --                                    applies to the current character
 -- LeaveTable    C<=>S RemoteFunction () -> ok, reason    leave the current room
--- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns
--- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change)
--- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues
+-- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns;
+--                                    placeSequenced = true advertises ordered placement
+-- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change);
+--                                    bombs[] carry seq for ordered placements only
+-- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues; bomb_set is
+--                                    {kind="bomb_set", ownerId, seq?} (seq absent for
+--                                    remote/bot/legacy placements)
 -- RoundEnd     S->C RemoteEvent      winnerId/name/char/colorIndex/duration/alive
 -- GetSync      C<=>S RemoteFunction  () -> full phase/room/roster/snapshot payload
 -- GetTables    C<=>S RemoteFunction  () -> versus table summaries
