@@ -93,6 +93,10 @@ function Prediction.new()
         active = false,
         localId = nil,
         grid = nil,
+        -- Monotonic map version of `grid` (snapshot.gridVer). nil means "no
+        -- versioned grid seen yet" (old server or fresh reset); in that state
+        -- every grid-bearing snapshot is applied, matching the legacy behavior.
+        gridVer = nil,
         world = nil,
         player = nil,
         history = {},
@@ -123,6 +127,9 @@ function Prediction:reset()
     self.active = false
     self.localId = nil
     self.grid = nil
+    -- A new round restarts the server's gridVer at 0, so the stale version from
+    -- the previous round must not reject the fresh map.
+    self.gridVer = nil
     self.world = nil
     self.player = nil
     self.history = {}
@@ -158,13 +165,58 @@ function Prediction:getAck(): number
     return self.ack
 end
 
+-- Diagnostics: the map version the shadow currently collides against.
+function Prediction:getGridVersion(): number?
+    return self.gridVer
+end
+
 -- Grid rows are only included in a snapshot when the map changes, so the same
 -- authoritative grid that RoundState carries is used to seed the predictor on
 -- round start. Without this the predictor would stay inactive until the next
 -- crate broke.
-function Prediction:setGrid(rows)
-    if rows ~= nil then
-        self.grid = Grid.rowsToGrid(rows)
+--
+-- `ver` is the monotonic gridVer that rode with the rows. An older or equal
+-- version is ignored: RoundState broadcasts and snapshots travel on separate
+-- remotes and can cross, so the rows themselves do not prove recency.
+-- Without a version (old server) every set still applies, as before.
+function Prediction:setGrid(rows, ver: number?)
+    if rows == nil then
+        return
+    end
+    if type(ver) == "number" then
+        if self.gridVer ~= nil and ver <= self.gridVer then
+            return
+        end
+        self.gridVer = ver
+    end
+    self.grid = Grid.rowsToGrid(rows)
+    -- world.grid shares the grid table, so the next simulated command collides
+    -- against the map this grid came from, not the one before it.
+    if self.world then
+        self.world.grid = self.grid
+    end
+end
+
+-- Apply a snapshot's map rows before any staleness decision. Grid rows ride on
+-- whichever snapshot happened to be built first after the map changed; with
+-- reordering that carrier can arrive behind a newer ack, and the ack guard
+-- below would otherwise drop the only copy of the map change. The monotonic
+-- version check keeps genuinely stale grids out, so applying unconditionally
+-- here cannot roll the predictor back.
+function Prediction:_applyGridRows(snapshot)
+    if type(snapshot) ~= "table" or snapshot.grid == nil then
+        return
+    end
+    local ver = snapshot.gridVer
+    if type(ver) == "number" then
+        if self.gridVer ~= nil and ver <= self.gridVer then
+            return
+        end
+        self.gridVer = ver
+    end
+    self.grid = Grid.rowsToGrid(snapshot.grid)
+    if self.world then
+        self.world.grid = self.grid
     end
 end
 
@@ -173,9 +225,8 @@ end
 -- in-progress crate slides. Bomb metadata is kept for prediction checks and
 -- owner+seq confirmation.
 function Prediction:_buildWorld(snapshot)
-    if snapshot.grid ~= nil then
-        self.grid = Grid.rowsToGrid(snapshot.grid)
-    end
+    -- The map itself was already applied by _applyGridRows above any staleness
+    -- guard; this only rebuilds the per-tick projection around it.
     if not self.grid then
         return false
     end
@@ -447,6 +498,10 @@ function Prediction:onSnapshot(snapshot, localId, now: number)
     end
 
     local playerData = if localId ~= nil then findPlayer(snapshot, localId) else nil
+
+    -- Map first: a newer grid must reach the predictor even when the rest of
+    -- this snapshot is stale (see _applyGridRows).
+    self:_applyGridRows(snapshot)
 
     -- Snapshots are reliable, but a GetSync answer and a live broadcast can
     -- cross. Never move the predictor backwards on an older ack.

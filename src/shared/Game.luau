@@ -896,6 +896,11 @@ end
 -- forceGrid is for one-client syncs (late join / GetSync): always include the
 -- map without consuming the pending "grid changed" flag that the regular
 -- broadcast still needs to deliver.
+--
+-- Every grid-bearing snapshot also carries gridVer, the monotonic map version.
+-- The client applies map rows only when the version advances, so a reordered
+-- snapshot can neither roll the board back to an older map nor starve the
+-- client predictor of a map change whose only carrier arrived out of order.
 function Game:snapshot(forceGrid: boolean?)
     local withGrid = forceGrid == true or self.gridVer ~= self._sentGridVer
     if not forceGrid then
@@ -1001,6 +1006,7 @@ function Game:snapshot(forceGrid: boolean?)
     }
     if withGrid then
         snapshot.grid = self:gridRows()
+        snapshot.gridVer = self.gridVer
     end
     return snapshot
 end

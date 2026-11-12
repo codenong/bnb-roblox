@@ -113,6 +113,53 @@ fire("Snapshot", { players = {} })
 frame()
 check("snapshot without grid leaves the board alone", Env.gridCalls == before)
 
+---------------------------------------------------------------- gridVer：乱序到达的旧地图不能倒退棋盘
+-- 带 grid 的快照可能乱序（grid 只随地图变化后的第一个快照下发）。客户端按
+-- gridVer 单调应用：旧版本既不能把棋盘画回旧地图，也不能绕过预测器。
+local gridV3 = { "v3" }
+fire("Snapshot", { grid = gridV3, gridVer = 3, players = {} })
+check("a versioned grid applies when newer", Env.lastGrid == gridV3)
+
+fire("Snapshot", { grid = { "v2" }, gridVer = 2, players = {} })
+check("an older map version cannot roll the board back", Env.lastGrid == gridV3)
+
+fire("Snapshot", { grid = { "v3-again" }, gridVer = 3, players = {} })
+check("the same map version is ignored", Env.lastGrid == gridV3)
+
+local gridV4 = { "v4" }
+fire("Snapshot", { grid = gridV4, gridVer = 4, players = {} })
+check("a newer map version applies immediately", Env.lastGrid == gridV4)
+
+---------------------------------------------------------------- gridVer：新对局重置版本
+local gridRound2 = { "round-2" }
+playing(3, gridRound2)
+check("a new round applies its fresh unversioned map", Env.lastGrid == gridRound2)
+
+local gridR2V1 = { "r2-v1" }
+fire("Snapshot", { grid = gridR2V1, gridVer = 1, players = {} })
+check("the fresh round's versioned map applies", Env.lastGrid == gridR2V1)
+
+local gridR2V2 = { "r2-v2" }
+fire("RoundState", {
+    phase = "playing",
+    roundId = 3,
+    roster = {},
+    yourId = "u1",
+    grid = gridR2V2,
+    gridVer = 2,
+})
+check("a versioned RoundState grid applies when newer", Env.lastGrid == gridR2V2)
+
+fire("RoundState", {
+    phase = "playing",
+    roundId = 3,
+    roster = {},
+    yourId = "u1",
+    grid = { "r2-stale" },
+    gridVer = 1,
+})
+check("a stale versioned RoundState cannot roll the map back", Env.lastGrid == gridR2V2)
+
 ---------------------------------------------------------------- 非对战阶段的快照被忽略
 local waitingGrid, stray = { "waiting" }, { "stray" }
 fire("RoundState", { phase = "waiting", roundId = 3, roster = {}, grid = waitingGrid })

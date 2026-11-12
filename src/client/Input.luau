@@ -214,9 +214,10 @@ end
 
 ---------------------------------------------------------------- 触屏摇杆
 
--- Touch uses a radial dead zone: 10% of the 54px travel is roughly 5-6px from
--- the centre, so a small off-centre thumb push responds immediately. This is
--- deliberately separate from the physical gamepad's 35% STICK_THRESHOLD.
+-- Touch uses a radial dead zone: 4% of the stick travel from the centre, so a
+-- small off-centre thumb push responds almost immediately while a resting
+-- finger inside the cap does not. This is deliberately separate from the
+-- physical gamepad's 35% STICK_THRESHOLD.
 local TOUCH_STICK_DEADZONE = 0.04
 
 local function touchDirectionFromAxes(x: number, y: number): string?
@@ -307,8 +308,11 @@ local function createTouchControls(gui: ScreenGui)
     frame.Parent = gui
     controls = frame
 
-    local baseSize = 180
-    local knobSize = 64
+    -- Sized for a thumb: a 132px base with a 48px cap keeps the whole rocking
+    -- motion inside roughly a 38px radius, which is the comfortable arc of a
+    -- resting thumb instead of a full swipe across the lower screen.
+    local baseSize = 132
+    local knobSize = 48
     local margin = 24
 
     local base = Instance.new("Frame")

@@ -37,9 +37,9 @@ check("touch controls can be shown", controls.Visible == true)
 -- The base is anchored bottom-left at (24, H-24); this is what Roblox would
 -- report through AbsolutePosition/AbsoluteSize while the joystick is visible.
 joystick.AbsolutePosition = Vector2.new(24, 400)
-joystick.AbsoluteSize = Vector2.new(180, 180)
-local centerX = 24 + 180 / 2
-local centerY = 400 + 180 / 2
+joystick.AbsoluteSize = Vector2.new(132, 132)
+local centerX = 24 + 132 / 2
+local centerY = 400 + 132 / 2
 
 local function touchAt(x: number, y: number)
     return {
@@ -74,12 +74,12 @@ check("dragging left moves left", dirs() == "left", dirs())
 drag(input, centerX, centerY + 40)
 check("dragging down moves down", dirs() == "down", dirs())
 
-drag(input, centerX + 2, centerY + 1)
-check("a tiny centre offset stays inside the 10% touch dead zone", dirs() == "", dirs())
-drag(input, centerX + 7, centerY)
-check("a small push just past 10% responds", dirs() == "right", dirs())
-drag(input, centerX + 4, centerY - 5)
-check("a small diagonal past 10% picks the dominant axis", dirs() == "up", dirs())
+drag(input, centerX + 1, centerY + 1)
+check("a tiny centre offset stays inside the 4% touch dead zone", dirs() == "", dirs())
+drag(input, centerX + 2, centerY)
+check("a small push just past 4% responds", dirs() == "right", dirs())
+drag(input, centerX + 2, centerY - 3)
+check("a small diagonal past 4% picks the dominant axis", dirs() == "up", dirs())
 drag(input, centerX + 15, centerY - 40)
 check("a mostly vertical drag picks up", dirs() == "up", dirs())
 drag(input, centerX + 40, centerY - 15)
@@ -91,7 +91,7 @@ local far = touchAt(centerX, centerY - 300)
 release(input)
 begin(far)
 check("holding past the top edge moves up", dirs() == "up", dirs())
-check("the knob pins at the top edge", TestLib.near(knob.Position.Y.Offset, -54, 0.001), knob.Position.Y.Offset)
+check("the knob pins at the top edge", TestLib.near(knob.Position.Y.Offset, -38, 0.001), knob.Position.Y.Offset)
 surface.InputEnded:Fire(far)
 check("the GUI losing the touch does not stop the stick", dirs() == "up", dirs())
 drag(far, centerX, centerY - 500)
@@ -103,7 +103,7 @@ check("release recentres the knob",
     tostring(knob.Position.X.Offset) .. "," .. tostring(knob.Position.Y.Offset))
 
 -- The touch and physical gamepad dead zones are intentionally different. A
--- 20% gamepad tilt is inside its 35% threshold even though touch responds at 10%.
+-- 20% gamepad tilt is inside its 35% threshold even though touch responds at 4%.
 local gamepad = {
     UserInputType = Enum.UserInputType.Gamepad1,
     KeyCode = Enum.KeyCode.Thumbstick1,

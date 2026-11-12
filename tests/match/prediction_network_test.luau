@@ -9,6 +9,7 @@ local near = TestLib.near
 
 local Constants = require("./Constants")
 local Grid = require("./Grid")
+local Map = require("./Map")
 local Prediction = require("./Prediction")
 local Room = require("./Room")
 local PlayerService = require("./PlayerService")
@@ -354,6 +355,122 @@ do
         entry ~= nil and near(tx, entry.fx, 0.1001) and near(ty, entry.fy, 0.1001),
         tostring(tx) .. "," .. tostring(ty))
     check("the server bomb survived confirmation", #h.latest.bombs >= 1)
+end
+
+---------------------------------------------------------------- 地图更新必须越过 ack 回退到达预测器
+
+-- The failure this pins down: at high RTT the snapshot that carries a map
+-- change can be reordered behind a newer ack. The old client applied its grid
+-- to the board but the predictor's ack guard dropped it, so the cell stayed
+-- solid for movement while the crate was already gone on screen. gridVer makes
+-- the map application monotonic and independent of the ack guard.
+do
+    local h = newHarness({
+        seed = 654321,
+        inputBase = 0.400,
+        inputSpread = 0,
+        snapBase = 0.400,
+        snapSpread = 0,
+    })
+    local room = h.room
+    local record = h.record
+    local prediction = h.prediction
+
+    -- A soft crate right in front of the player's lane.
+    room.game.players[record.id].x = 60
+    room.game.players[record.id].y = 60
+    room.game.grid[1][2] = Map.SOFT
+    room.game.gridVer = 0
+
+    local before = room.game:snapshot(true)
+    prediction:reset()
+    prediction:onSnapshot(before, record.id, h.now)
+    check("the pre-change map carries gridVer 0", before.gridVer == 0, before.gridVer)
+
+    -- The shadow pushes into the crate and stops at its edge.
+    local blockedX = nil
+    for i = 1, 40 do
+        prediction:step(i, { "right" }, h.now)
+    end
+    local bx, by = prediction:getTargetPosition()
+    blockedX = bx
+    check("the shadow is stopped by the crate", bx ~= nil and bx <= 2 * Constants.TILE - Constants.HALF,
+        blockedX)
+
+    -- The server explodes the crate (the bomb path itself is covered by the
+    -- game tests); the next snapshot carries the opened map at gridVer 1.
+    room.game.grid[1][2] = Map.EMPTY
+    room.game.gridVer += 1
+    local gridSnapshot = room.game:snapshot(true)
+    check("the map-change snapshot carries the new gridVer", gridSnapshot.gridVer == 1,
+        gridSnapshot.gridVer)
+
+    -- A later snapshot with no grid rows lands first and advances the ack.
+    local function cloneWithoutGrid(snap, ackBump)
+        local copy = {
+            tick = snap.tick,
+            warmup = snap.warmup,
+            timeLeft = snap.timeLeft,
+            players = {},
+            bombs = {},
+            expl = {},
+            items = {},
+            loot = {},
+            crateSlides = {},
+        }
+        for _, p in ipairs(snap.players) do
+            local entry = {}
+            for key, value in pairs(p) do
+                entry[key] = value
+            end
+            entry.ack = (entry.ack or 0) + ackBump
+            table.insert(copy.players, entry)
+        end
+        return copy
+    end
+    prediction:onSnapshot(cloneWithoutGrid(gridSnapshot, 40), record.id, h.now)
+    local ackAfterNewer = prediction:getAck()
+
+    -- The map-change carrier finally arrives out of order, behind that newer
+    -- ack. Its map rows must still reach the predictor; everything else stays
+    -- at the newer state.
+    prediction:onSnapshot(gridSnapshot, record.id, h.now)
+    check("the reordered map change does not regress the ack", prediction:getAck() == ackAfterNewer,
+        prediction:getAck())
+    check("the predictor adopted the new map version", prediction:getGridVersion() == 1,
+        prediction:getGridVersion())
+
+    -- The opened crate tile must be open for the shadow's collision. Hold
+    -- right and verify the shadow walks through where the crate was.
+    local tx, ty = prediction:getTargetPosition()
+    check("the shadow kept its position through the reorder", tx ~= nil and math.abs(tx - 60) < 0.001,
+        tx)
+    check("the lane stayed aligned through the reorder", ty ~= nil and math.abs(ty - 60) < 0.001, ty)
+
+    -- Holding right now walks straight through where the crate was.
+    local moved = false
+    local lastSeq = ackAfterNewer
+    for i = 1, 30 do
+        lastSeq += 1
+        prediction:step(lastSeq, { "right" }, h.now)
+    end
+    local fx, fy = prediction:getTargetPosition()
+    moved = fx ~= nil and fx > 2 * Constants.TILE + Constants.HALF
+    check("the shadow walks through the opened cell", moved == true, fx)
+    check("the shadow stays aligned with the lane", fy ~= nil and math.abs(fy - 60) < 0.001, fy)
+    check("the map version is unchanged by plain movement", prediction:getGridVersion() == 1,
+        prediction:getGridVersion())
+
+    -- A genuinely stale grid (the pre-change rows at the old version) must be
+    -- rejected: neither the ack nor the open cell may regress.
+    prediction:onSnapshot(before, record.id, h.now)
+    check("an old-ack snapshot cannot restore the crate", prediction:getAck() == ackAfterNewer,
+        prediction:getAck())
+    check("a stale map version cannot re-solidify the cell", prediction:getGridVersion() == 1,
+        prediction:getGridVersion())
+    local fx2 = prediction:getTargetPosition()
+    check("the shadow still stands past the crate", fx2 ~= nil and fx2 > 2 * Constants.TILE,
+        fx2)
 end
 
 TestLib.finish()

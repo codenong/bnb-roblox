@@ -155,6 +155,23 @@ for _, id in ipairs(bomb and bomb.pass or {}) do
 end
 check("the owner's bomb carries its pass list", passesAlice)
 
+---------------------------------------------------------------- 地图版本
+
+-- gridVer rides with every grid-bearing snapshot so the client can apply map
+-- changes monotonically under reordering; it is omitted with the rows.
+room.game.grid[2][3] = 2 -- Map.SOFT, an interior cell of the border-only map
+room.game.gridVer += 1
+local gridSnapshot = room.game:snapshot()
+check("a map change rides with grid rows", gridSnapshot.grid ~= nil)
+check("grid rows carry the map version", gridSnapshot.gridVer == room.game.gridVer,
+    gridSnapshot.gridVer)
+check("the map version is omitted without grid rows", room.game:snapshot().gridVer == nil)
+
+local state = room:_buildState(alice)
+check("RoundState carries the current map", type(state.grid) == "table")
+check("RoundState carries the map version", state.gridVer == room.game.gridVer,
+    state.gridVer)
+
 ---------------------------------------------------------------- 新一局重置
 
 room:resetForWaiting()

@@ -100,6 +100,13 @@ local interp = Interpolation.new()
 local prediction = Prediction.new()
 local currentState = nil
 local lastSnapshot = nil
+-- Highest map version (snapshot/RoundState gridVer) applied to the board.
+-- Grid rows ride on whichever snapshot or broadcast was built first after the
+-- map changed; with reordering at high RTT that carrier can arrive behind a
+-- newer snapshot, and blindly applying it would draw an older map (crates that
+-- are already gone reappear). Applying by version keeps the board, the
+-- predictor and the server on the same map. nil = nothing applied yet.
+local appliedGridVer = nil
 -- One sequenced command per 30Hz tick. Sequence numbers stay monotonic for the
 -- whole session; the server scopes them to the current round.
 local inputSeq = 0
@@ -125,8 +132,26 @@ local function resetVisibleRound()
     pendingPlace = false
     inputStarted = false
     inputAccumulator = 0
+    appliedGridVer = nil
     Renderer.clear()
     Board.setSliding({})
+end
+
+-- One place decides whether map rows reach the board and the predictor. Rows
+-- without a version (old server) always apply; versioned rows apply only when
+-- the version advances, in both the Snapshot and RoundState paths.
+local function applyMapRows(rows, ver)
+    if type(rows) ~= "table" then
+        return
+    end
+    if type(ver) == "number" then
+        if appliedGridVer ~= nil and ver <= appliedGridVer then
+            return
+        end
+        appliedGridVer = ver
+    end
+    Board.setGrid(rows)
+    prediction:setGrid(rows, ver)
 end
 
 local function applySnapshot(snapshot)
@@ -137,8 +162,10 @@ local function applySnapshot(snapshot)
     -- 地图 grid 只在变化时随快照下发一次，必须在收到的这一刻就应用。
     -- 不能留到渲染时再从"当前快照"里取：同一帧里连收两个快照（掉帧、网络抖动后的
     -- 突发）时，带 grid 的那个会变成"上一个快照"而被跳过，被炸掉的箱子会一直留在画面上。
+    -- 另外快照可能乱序：带 grid 的旧快照不能把已经更新的棋盘倒退回去，
+    -- 所以按 gridVer 单调应用（applyMapRows）。
     if snapshot.grid then
-        Board.setGrid(snapshot.grid)
+        applyMapRows(snapshot.grid, snapshot.gridVer)
     end
 
     lastSnapshot = snapshot
@@ -191,10 +218,11 @@ local function applyState(newState)
     Renderer.setRoster(newState.roster or {})
     Renderer.setYourId(newState.yourId)
     if newState.grid then
-        Board.setGrid(newState.grid)
         -- RoundState always carries the map and arrives before the first round
-        -- snapshot, which only includes the grid when it changes.
-        prediction:setGrid(newState.grid)
+        -- snapshot, which only includes the grid when it changes. A RoundState
+        -- that crosses a newer snapshot must not roll the map back, so the
+        -- same monotonic version rule applies here.
+        applyMapRows(newState.grid, newState.gridVer)
     end
     Hud.setState(newState)
 

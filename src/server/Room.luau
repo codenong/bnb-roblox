@@ -381,6 +381,11 @@ function Room:_buildState(record)
         roster = self.roster,
         botFill = 0,
         grid = if self.game then self.game:gridRows() else Grid.gridToRows(Map.buildMap()),
+        -- Monotonic map version riding with the grid (0 for the fresh map a
+        -- room shows before its first game). Clients apply map rows only when
+        -- this advances, so a RoundState that crosses a newer snapshot can
+        -- never roll the board or the predictor back to an older map.
+        gridVer = if self.game then self.game.gridVer else 0,
         spawns = Map.SPAWNS,
         tile = Constants.TILE,
         selectedChar = selectedChar,
