@@ -17,8 +17,13 @@
 -- LeaveTable    C<=>S RemoteFunction () -> ok, reason    leave the current room
 -- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns;
 --                                    placeSequenced = true advertises ordered placement
--- Snapshot     S->C RemoteEvent      20Hz simulation snapshot (grid only on change);
---                                    bombs[] carry seq for ordered placements only
+-- Snapshot     S->C RemoteEvent      20Hz simulation snapshot packed into one
+--                                    binary buffer per frame (SnapshotCodec.pack,
+--                                    stateless zip/unzip; unpack restores the
+--                                    exact logical table). grid only when it
+--                                    changed; bombs[] carry seq for ordered
+--                                    placements only. RoundState/GetSync still
+--                                    carry raw tables.
 -- Fx           S->C RemoteEvent      {kind, ...} sound/visual cues; bomb_set is
 --                                    {kind="bomb_set", ownerId, seq?} (seq absent for
 --                                    remote/bot/legacy placements)

@@ -13,6 +13,7 @@ local Map = require("./Map")
 local Prediction = require("./Prediction")
 local Room = require("./Room")
 local PlayerService = require("./PlayerService")
+local SnapshotCodec = require("./SnapshotCodec")
 local Net = require("./Net")
 
 local DT = Constants.DT
@@ -104,6 +105,11 @@ local function newHarness(opts)
     Net.sendHook = function(_, name, payload)
         if name ~= "Snapshot" then
             return
+        end
+        -- The Room sends packed frames; decode in send order (packing is
+        -- stateless, so jittered delivery downstream stays unaffected).
+        if typeof(payload) == "buffer" then
+            payload = SnapshotCodec.unpack(payload)
         end
         local delay = h.snapBase + (h.rng() * 2 - 1) * h.snapSpread
         if delay < 0.001 then

@@ -89,6 +89,7 @@ cp match/shop_auto_carry_test.luau "$MATCH_BUILD/"
 cp match/shop_exit_test.luau "$MATCH_BUILD/"
 cp match/input_buffer_test.luau "$MATCH_BUILD/"
 cp match/place_command_test.luau "$MATCH_BUILD/"
+cp match/snapshot_wire_test.luau "$MATCH_BUILD/"
 cp match/prediction_differential_test.luau "$MATCH_BUILD/"
 cp match/prediction_network_test.luau "$MATCH_BUILD/"
 cp testlib.luau "$MATCH_BUILD/"
@@ -119,6 +120,8 @@ echo "== input_buffer_test.luau (sequenced input, 2-tick buffer, acks, snapshot 
 "$LUAU" "$MATCH_BUILD/input_buffer_test.luau"
 echo "== place_command_test.luau (ordered placement, pre-move tile, Fx seq, legacy action)"
 "$LUAU" "$MATCH_BUILD/place_command_test.luau"
+echo "== snapshot_wire_test.luau (Room sends packed frames, unpack equals logical snapshot)"
+"$LUAU" "$MATCH_BUILD/snapshot_wire_test.luau"
 echo "== prediction_differential_test.luau (Game vs Prediction frame-by-frame, placement alignment)"
 "$LUAU" "$MATCH_BUILD/prediction_differential_test.luau"
 echo "== prediction_network_test.luau (latency + jitter convergence, ordered placement)"
@@ -134,13 +137,15 @@ mkdir -p "$CLIENT_BUILD"
     -e 's/require\(Shared:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
     -e 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' \
     ../src/client/Main.client.luau
-  # Main is a script (returns nothing); give the test copy a return value so require() accepts it.
-  printf '\nreturn true\n'
+  # Main is a script (returns nothing); give the test copy a table return so
+  # require() accepts it. The Luau CLI (>=0.6xx) rejects boolean returns with
+  # "module must return a table or function", so a bare `return true` breaks.
+  printf '\nreturn {}\n'
 } > "$CLIENT_BUILD/Main.luau"
 cp ../src/client/Interpolation.luau "$CLIENT_BUILD/Interpolation.luau"
 # The real shared modules the prediction path needs, plus the real Prediction
 # module. Everything else under script.Parent stays stubbed below.
-for name in Constants Characters Grid Mounts Movement; do
+for name in Constants Characters Grid Mounts Movement SnapshotCodec; do
   cp "build/$name.luau" "$CLIENT_BUILD/"
 done
 {

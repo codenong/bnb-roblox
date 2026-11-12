@@ -16,6 +16,7 @@ local Map = require(Shared:WaitForChild("Map"))
 local Game = require(Shared:WaitForChild("Game"))
 local Net = require(Shared:WaitForChild("Net"))
 local Shop = require(Shared:WaitForChild("Shop"))
+local SnapshotCodec = require(Shared:WaitForChild("SnapshotCodec"))
 
 local BotService = require(script.Parent:WaitForChild("BotService"))
 local PlayerService = require(script.Parent:WaitForChild("PlayerService"))
@@ -332,6 +333,17 @@ end
 function Room:_sendAll(name: string, payload: any)
     for _, record in ipairs(self.members) do
         self:_send(record, name, payload)
+    end
+end
+
+-- Send one 20Hz snapshot to every member. The snapshot table is packed once
+-- into a compact binary buffer (SnapshotCodec) and the same buffer goes to
+-- every member; unpacking on the client restores the exact logical table, so
+-- Interpolation/Prediction/Hud see no difference.
+function Room:_sendSnapshot(full)
+    local payload = SnapshotCodec.pack(full)
+    for _, record in ipairs(self.members) do
+        self:_send(record, "Snapshot", payload)
     end
 end
 
@@ -848,7 +860,7 @@ function Room:finishRound()
 
     -- Final frame + result only to this room. RoundState below carries the
     -- same result to members that are not in the snapshot audience path.
-    self:_sendAll("Snapshot", self.game:snapshot())
+    self:_sendSnapshot(self.game:snapshot())
     self:_sendAll("RoundEnd", self.lastResult)
 
     self.phase = "ended"
@@ -1009,7 +1021,7 @@ function Room:_stepPlaying()
 
     if #self.members > 0 then
         self.snapshot:step(self.game, function(snapshot)
-            self:_sendAll("Snapshot", snapshot)
+            self:_sendSnapshot(snapshot)
         end)
     end
 end

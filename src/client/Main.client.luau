@@ -17,6 +17,7 @@ local playerGui = player:WaitForChild("PlayerGui")
 local Shared = ReplicatedStorage:WaitForChild("Shared")
 local Constants = require(Shared:WaitForChild("Constants"))
 local Net = require(Shared:WaitForChild("Net"))
+local SnapshotCodec = require(Shared:WaitForChild("SnapshotCodec"))
 
 local Audio = require(script.Parent:WaitForChild("Audio"))
 local Board = require(script.Parent:WaitForChild("Board"))
@@ -245,10 +246,23 @@ end
 
 roundStateRemote.OnClientEvent:Connect(applyState)
 
-snapshotRemote.OnClientEvent:Connect(function(snapshot)
+snapshotRemote.OnClientEvent:Connect(function(payload)
     local phase = currentState and currentState.phase
     if phase ~= "playing" and phase ~= "ended" then
         return
+    end
+
+    -- Snapshot payloads arrive packed (SnapshotCodec.pack on the server).
+    -- Raw tables pass through unchanged: that is the legacy path and the
+    -- RoundState/GetSync embedded snapshots, which are always full anyway.
+    local snapshot = payload
+    if typeof(payload) == "buffer" then
+        snapshot = SnapshotCodec.unpack(payload)
+        if snapshot == nil then
+            -- A broken or foreign frame. Packing is stateless, so dropping
+            -- this one frame loses nothing: the next payload is complete.
+            return
+        end
     end
     applySnapshot(snapshot)
 end)
