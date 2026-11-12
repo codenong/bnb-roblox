@@ -462,12 +462,33 @@ function Prediction:_predictPlace(seq: number, now: number): boolean
     return true
 end
 
--- Game:updateBombPass removes a pass once the player no longer overlaps; it
--- never re-adds one. Mirror that at the start of every simulated command.
-function Prediction:_refreshPredictedPass()
+-- Game:updateBombPass removes a pass once its player no longer overlaps the
+-- bomb tile; it never re-adds one. Mirror that for the WHOLE projected world
+-- at the start of every simulated command, exactly where Game:tick runs
+-- updateBombPass. Covering server bombs matters at high RTT: the snapshot that
+-- seeded this world is pipeline-depth ticks old and can still carry a pass the
+-- server has already revoked. Without this mirror the shadow walks back
+-- through its own bomb row (the stale pass keeps the cell passable), diverges
+-- from the blocked server position and rubber-bands -- on screen the character
+-- repeatedly passes through bombs that should stop it. Only the local
+-- player's entries are touched: no other player is simulated here, so their
+-- passes never affect the shadow's collision.
+function Prediction:_refreshBombPass()
     if not self.player or not self.localId then
         return
     end
+    local world = self.world
+    if world then
+        for _, bomb in pairs(world.bombsByPos) do
+            local pass = bomb.pass
+            if pass and pass[self.localId]
+                and not overlapsTile(self.player, bomb.tx, bomb.ty) then
+                pass[self.localId] = nil
+            end
+        end
+    end
+    -- Predicted bombs normally sit in world.bombsByPos too; walk the list as a
+    -- safety net in case one is not currently keyed in the projection.
     for _, bomb in ipairs(self.predicted) do
         if bomb.pass[self.localId] and not overlapsTile(self.player, bomb.tx, bomb.ty) then
             bomb.pass[self.localId] = nil
@@ -592,7 +613,7 @@ function Prediction:onSnapshot(snapshot, localId, now: number)
                 self.world.bombsByPos[key] = predicted
             end
         end
-        self:_refreshPredictedPass()
+        self:_refreshBombPass()
         player.dirs = command.dirs
         Movement.step(self.world, player)
     end
@@ -650,7 +671,7 @@ function Prediction:step(seq: number, dirs, now: number, place: boolean?): (bool
         -- Pre-move, exactly like Game:setInput before Game:tick.
         placePredicted = self:_predictPlace(seq, now)
     end
-    self:_refreshPredictedPass()
+    self:_refreshBombPass()
 
     self.player.dirs = commandDirs
     Movement.step(self.world, self.player)

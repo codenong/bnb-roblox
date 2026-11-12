@@ -479,4 +479,78 @@ do
         fx2)
 end
 
+---------------------------------------------------------------- 回头不得穿过自己的炸弹行（高 RTT）
+
+-- The failure this pins down: at 400ms RTT the snapshot that seeds the
+-- predictor's world is pipeline-depth ticks old, so bombs the local player has
+-- already walked off still carry an alive pass in that projection. The
+-- predictor used to mirror Game:updateBombPass only for its own predicted
+-- bombs, so turning around inside that window walked the shadow straight back
+-- through the bomb row while the server blocked it: on screen the character
+-- kept passing through bombs and rubber-banding. The predictor now revokes the
+-- local player's pass on every projected bomb the shadow has left, exactly
+-- where Game:tick runs updateBombPass.
+do
+    local h = newHarness({
+        seed = 999331,
+        inputBase = 0.400,
+        inputSpread = 0.010,
+        snapBase = 0.400,
+        snapSpread = 0.010,
+    })
+    local room = h.room
+    local record = h.record
+    local prediction = h.prediction
+    local serverPlayer = room.game.players[record.id]
+
+    -- Enough capacity to lay a row of bombs while running. The harness's
+    -- initial snapshot was taken before this, so re-feed one that carries it.
+    room.game.players[record.id].maxBombs = 5
+    prediction:onSnapshot(room.game:snapshot(true), record.id, h.now)
+
+    -- Walk right laying bombs, then turn around inside the RTT pipeline and
+    -- walk back into the row. The row ends up on tiles 1..5 of the lane.
+    local phaseA, phaseB = 34, 60
+    local laneY = math.floor(serverPlayer.y / Constants.TILE)
+    local crossedShadow = nil
+    for i = 1, phaseA + phaseB do
+        local walkingBack = i > phaseA
+        h.tick(walkingBack and { "left" } or { "right" }, not walkingBack)
+        if walkingBack then
+            local tx, ty = prediction:getTargetPosition()
+            if tx then
+                local tileX = math.floor(tx / Constants.TILE)
+                if tileX <= 4 then
+                    -- Centering inside a bomb tile is only legal while that
+                    -- bomb still carries the local pass server-side.
+                    local bomb = room.game.bombsByPos[Grid.key(tileX, laneY)]
+                    if bomb == nil or not (bomb.pass and bomb.pass[record.id]) then
+                        crossedShadow = crossedShadow
+                            or string.format("tick %d shadow tile %d x=%.1f", i, tileX, tx)
+                    end
+                end
+            end
+        end
+    end
+    -- Drain the pipeline so the final assertions see the settled state.
+    for _ = 1, 80 do
+        h.advance()
+        if h.converged() then
+            break
+        end
+    end
+
+    -- The server itself must still be east of tile 4: blocked by the row, it
+    -- stays on its own eastmost bomb tile. (During the first ~14 walk-back
+    -- ticks the server is still legitimately executing the rightward pipeline,
+    -- so only the settled position pins the scenario.)
+    check("the authoritative server blocks the walk-back at the row",
+        math.floor(serverPlayer.x / Constants.TILE) >= 5,
+        tostring(serverPlayer.x))
+    check("the shadow never walks through its own bomb row",
+        crossedShadow == nil, tostring(crossedShadow))
+    check("all sent commands were applied", h.converged() == true,
+        h.latest and playerEntry(h.latest, record.id) and playerEntry(h.latest, record.id).ack)
+end
+
 TestLib.finish()

@@ -240,9 +240,18 @@ do
     local bombAtTwo = {
         { id = 1, x = 2, y = 1, sx = 100, sy = 60, fuse = 75, remote = false, owner = "u1", pass = { "u1" } },
     }
+    -- The owner starts ON the bomb tile: Game:updateBombPass revokes a pass as
+    -- soon as its player no longer overlaps the bomb, so a pass can only be
+    -- alive while the owner stands on (or is still halfway out of) the tile --
+    -- and the predictor now mirrors that instead of trusting stale snapshot
+    -- passes for tiles the shadow has already left.
     local withPass = Prediction.new()
     withPass:onSnapshot(
-        snapshot({ grid = corridorRows(), bombs = bombAtTwo }),
+        snapshot({
+            grid = corridorRows(),
+            players = { playerData("u1", 100, 60) },
+            bombs = bombAtTwo,
+        }),
         "u1",
         1
     )
