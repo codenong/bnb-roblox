@@ -31,7 +31,12 @@ local Constants = {
     MAX_REMOTE = 2,
 
     HALF = 13,
-    ASSIST_RANGE = 12,
+    -- Corner assist: how far off a lane centre a turn still gets slid into the
+    -- lane. A 40px tile has a 20px half width and a lane's centre is at most 20px
+    -- from the player, so this must stay below 20 or two neighbouring lanes
+    -- would both qualify. 18 gives a turn window of 37px (≈155ms at 240px/s);
+    -- it was 12 (25px, ≈104ms). Shared by Game and the client predictor.
+    ASSIST_RANGE = 18,
 
     DIRS4 = {
         { 1, 0 },

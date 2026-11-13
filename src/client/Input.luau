@@ -228,15 +228,17 @@ end
 --   TOUCH_RELEASE  once moving, the stick only stops (or reverses) below this
 --                  much push; the gap to TOUCH_ENGAGE is the hysteresis.
 --   TOUCH_LEASH    the anchor follows the thumb beyond this distance, so going
---                  back the other way costs about LEASH + ENGAGE (15px) of
+--                  back the other way costs about LEASH + ENGAGE (11px) of
 --                  thumb travel no matter how far the thumb had overshot the
 --                  base: the sweep passes through "stopped" and restarts.
 --   TOUCH_AXIS_BIAS the other axis must beat the current one by this factor
 --                  before the stick turns a corner; kills diagonal flicker.
+--                  Turning a corner needs about LEASH x BIAS (7px) of thumb
+--                  travel across the held axis.
 local TOUCH_ENGAGE = 5
 local TOUCH_RELEASE = 2.5
-local TOUCH_LEASH = 10
-local TOUCH_AXIS_BIAS = 1.3
+local TOUCH_LEASH = 6
+local TOUCH_AXIS_BIAS = 1.15
 
 -- rx/ry are screen-space offsets from the anchor (y grows downward).
 local function touchDirection(rx: number, ry: number, current: string?): string?
