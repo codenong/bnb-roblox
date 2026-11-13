@@ -109,7 +109,19 @@ print(string.format("  sample frame: table model %.0f bytes -> packed %d bytes",
 local nils = sampleSnapshot()
 nils.players[2].mount = nil
 nils.bombs[2].seq = nil
+nils.players[1].dir = nil
+nils.players[2].dir = nil
 roundtrip(nils, "nil mount and seq")
+
+-- lastMoveDir (player.dir) rides with every player: it drives the shared turn
+-- buffer and release glide, so every value must round-trip exactly, including
+-- "not moved yet" (nil).
+for _, dir in ipairs({ "up", "down", "left", "right" }) do
+	local snap = sampleSnapshot()
+	snap.players[1].dir = dir
+	snap.players[2].dir = nil
+	roundtrip(snap, "dir " .. dir)
+end
 
 local empties = {
     tick = 0, warmup = 90, timeLeft = 180,

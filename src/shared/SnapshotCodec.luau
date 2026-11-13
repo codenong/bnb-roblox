@@ -14,7 +14,7 @@
 -- the GetSync answer keep carrying raw tables (they are one-off full states).
 --
 -- Frame layout (little-endian via the buffer API):
---   u8  version (2)
+--   u8  version (3)
 --   u8  flags: bit0 = grid present
 --   u32 tick
 --   u16 warmup, u16 timeLeft
@@ -24,6 +24,7 @@
 --     u32 ack                      u8 flags: alive | trapped<<1 | kick<<2
 --     mount (u8 len, 0 = nil)      u16 speed*10
 --     u8 maxBombs, u8 range, u8 inv.needle, u8 inv.remote
+--     u8 dir: 0 = nil, 1 = up, 2 = down, 3 = left, 4 = right (lastMoveDir)
 --   bombs:    u8 count; per bomb:
 --     u16 id, u8 x, u8 y (tiles), u16 sx*10, u16 sy*10, u16 fuse,
 --     u8 flags: remote<<0, owner id, seq (u8 present + u32, absent = nil),
@@ -45,10 +46,16 @@
 
 local SnapshotCodec = {}
 
-SnapshotCodec.VERSION = 2
+SnapshotCodec.VERSION = 3
 
 local KIND_NUMBER = 1
 local KIND_STRING = 2
+
+-- Last movement direction (player.lastMoveDir) drives the shared turn buffer
+-- and release glide; without it a reconciled client would replay differently
+-- from the server. 0 encodes nil (player has not moved yet).
+local DIR_CODES = { up = 1, down = 2, left = 3, right = 4 }
+local DIR_NAMES = { [1] = "up", [2] = "down", [3] = "left", [4] = "right" }
 
 local SCRATCH_BYTES = 16384
 
@@ -107,7 +114,8 @@ local function packPlayers(buf, off, players)
         buffer.writeu8(buf, off + 3, p.range)
         buffer.writeu8(buf, off + 4, p.inv and p.inv.needle or 0)
         buffer.writeu8(buf, off + 5, p.inv and p.inv.remote or 0)
-        off += 6
+        buffer.writeu8(buf, off + 6, if p.dir ~= nil then DIR_CODES[p.dir] or 0 else 0)
+        off += 7
     end
     return off
 end
@@ -289,7 +297,11 @@ local function unpackPlayers(buf, off)
             needle = buffer.readu8(buf, off + 4),
             remote = buffer.readu8(buf, off + 5),
         }
-        off += 6
+        local dirCode = buffer.readu8(buf, off + 6)
+        if dirCode ~= 0 then
+            p.dir = DIR_NAMES[dirCode]
+        end
+        off += 7
         table.insert(players, p)
     end
     return players, off

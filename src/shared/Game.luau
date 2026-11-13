@@ -106,6 +106,10 @@ function Game.new(playerDefs, opts)
             x = spawn[1] * TILE + TILE / 2,
             y = spawn[2] * TILE + TILE / 2,
             dirs = {},
+            -- Direction of the last successful move (or final turn). Drives the
+            -- shared turn buffer and release glide in Movement.step; snapshots
+            -- carry it as `dir` so client prediction replays identically.
+            lastMoveDir = nil,
             -- Last sequenced input command the server applied for this player.
             -- Snapshots carry it back so the client can replay only newer input.
             ack = 0,
@@ -326,7 +330,11 @@ end
 
 function Game:movePlayer(player)
     local status = Movement.step(self, player)
-    if status == "blocked" then
+    -- "buffered" means the held direction is blocked while the turn buffer
+    -- carries the player along the old one. Kick/push see the held direction,
+    -- exactly as they would if the player had stopped: pressing into a bomb or
+    -- crate still counts as pressing into it.
+    if status == "blocked" or status == "buffered" then
         local dir = player.dirs[#player.dirs]
         if dir then
             self:tryKick(player, dir)
@@ -919,6 +927,10 @@ function Game:snapshot(forceGrid: boolean?)
             fy = math.floor(player.y * 10 + 0.5) / 10,
             -- Last command sequence applied by the server for this player.
             ack = player.ack or 0,
+            -- Last movement direction for the shared turn buffer / release
+            -- glide. nil until the player has moved; Prediction re-seeds it
+            -- before replaying unacknowledged commands.
+            dir = player.lastMoveDir,
             alive = player.alive,
             trapped = player.trapped,
             mount = player.mount,

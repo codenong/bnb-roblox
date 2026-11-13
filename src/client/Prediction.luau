@@ -274,6 +274,7 @@ function Prediction:_syncPlayer(playerData)
     if not player then
         player = {
             dirs = {},
+            lastMoveDir = nil,
             pushKey = nil,
             pushAcc = 0,
         }
@@ -289,6 +290,15 @@ function Prediction:_syncPlayer(playerData)
     player.maxBombs = if type(playerData.maxBombs) == "number"
         then playerData.maxBombs
         else player.maxBombs or 1
+    -- The shared turn buffer / release glide state. Re-seeded from every
+    -- snapshot so the replay of unacknowledged commands below starts from the
+    -- same momentum the server had; the replayed steps then advance it exactly
+    -- like the server's ticks do. An old server without the field simply
+    -- disables both behaviours client-side.
+    player.lastMoveDir = if playerData.dir == "up" or playerData.dir == "down"
+        or playerData.dir == "left" or playerData.dir == "right"
+        then playerData.dir
+        else nil
     return player
 end
 

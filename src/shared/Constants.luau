@@ -37,6 +37,13 @@ local Constants = {
     -- would both qualify. 18 gives a turn window of 37px (≈155ms at 240px/s);
     -- it was 12 (25px, ≈104ms). Shared by Game and the client predictor.
     ASSIST_RANGE = 18,
+    -- Release snap (Movement.step's idle glide): how far past the cell centre
+    -- behind the player still counts as "not committed". A release with more
+    -- progress than this completes the crossing to the next centre (so a tap
+    -- walks exactly one cell), less walks back to the centre behind (so an
+    -- accidental brush cancels out). 8px ≈ one tick at full speed. Shared by
+    -- Game and the client predictor.
+    SNAP_COMMIT_PX = 8,
 
     DIRS4 = {
         { 1, 0 },
