@@ -74,14 +74,17 @@ check("dragging left moves left", dirs() == "left", dirs())
 drag(input, centerX, centerY + 40)
 check("dragging down moves down", dirs() == "down", dirs())
 
--- Travel is 29px (106/2 - 40/2 - 4), so the 4% radial dead zone has a radius
--- of ~1.16px: a 1px push (≈3.4%) stays silent, 2px (≈6.9%) responds.
+-- Travel is 29px (106/2 - 40/2 - 4), so the 20% radial dead zone has a radius
+-- of ~5.8px: pushes of 1px (≈3.4%) and 5px (≈17.2%) stay silent, 6px (≈20.7%)
+-- responds.
 drag(input, centerX + 1, centerY)
-check("a tiny centre offset stays inside the 4% touch dead zone", dirs() == "", dirs())
-drag(input, centerX + 2, centerY)
-check("a small push just past 4% responds", dirs() == "right", dirs())
-drag(input, centerX + 2, centerY - 3)
-check("a small diagonal past 4% picks the dominant axis", dirs() == "up", dirs())
+check("a tiny centre offset stays inside the 20% touch dead zone", dirs() == "", dirs())
+drag(input, centerX + 5, centerY)
+check("a push just inside 20% stays silent", dirs() == "", dirs())
+drag(input, centerX + 6, centerY)
+check("a push just past 20% responds", dirs() == "right", dirs())
+drag(input, centerX + 3, centerY - 6)
+check("a small diagonal past 20% picks the dominant axis", dirs() == "up", dirs())
 drag(input, centerX + 15, centerY - 40)
 check("a mostly vertical drag picks up", dirs() == "up", dirs())
 drag(input, centerX + 40, centerY - 15)
@@ -105,7 +108,7 @@ check("release recentres the knob",
     tostring(knob.Position.X.Offset) .. "," .. tostring(knob.Position.Y.Offset))
 
 -- The touch and physical gamepad dead zones are intentionally different. A
--- 20% gamepad tilt is inside its 35% threshold even though touch responds at 4%.
+-- 20% gamepad tilt is inside its 35% threshold; touch responds at 20%.
 local gamepad = {
     UserInputType = Enum.UserInputType.Gamepad1,
     KeyCode = Enum.KeyCode.Thumbstick1,

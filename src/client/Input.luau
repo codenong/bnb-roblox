@@ -57,6 +57,11 @@ local joystickKnob = nil
 local joystickTouch = nil
 local joystickDirection = nil
 local joystickTravel = 54
+-- The stick is relative: its origin is where the thumb landed, and the origin
+-- is dragged along whenever the thumb gets further than TOUCH_LEASH from it.
+-- Only the picture of the base stays put.
+local joystickAnchorX = nil
+local joystickAnchorY = nil
 
 local function setSource(source: string, direction: string?)
     if direction then
@@ -74,6 +79,8 @@ end
 local function resetJoystick()
     joystickTouch = nil
     joystickDirection = nil
+    joystickAnchorX = nil
+    joystickAnchorY = nil
     setSource(TOUCH_STICK_SOURCE, nil)
     if joystickKnob then
         joystickKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -214,28 +221,44 @@ end
 
 ---------------------------------------------------------------- 触屏摇杆
 
--- Touch uses a radial dead zone: 4% of the stick travel from the centre, so a
--- small off-centre thumb push responds almost immediately while a resting
--- finger inside the cap does not. This is deliberately separate from the
--- physical gamepad's 35% STICK_THRESHOLD.
-local TOUCH_STICK_DEADZONE = 0.04
+-- Touch steering is relative to an anchor that trails the thumb (see
+-- joystickAnchorX/Y). All distances are screen pixels measured from the anchor:
+--   TOUCH_ENGAGE   a resting stick starts moving only after this much push, so
+--                  landing the thumb or a small tremor never walks the player.
+--   TOUCH_RELEASE  once moving, the stick only stops (or reverses) below this
+--                  much push; the gap to TOUCH_ENGAGE is the hysteresis.
+--   TOUCH_LEASH    the anchor follows the thumb beyond this distance, so going
+--                  back the other way costs about LEASH + ENGAGE (15px) of
+--                  thumb travel no matter how far the thumb had overshot the
+--                  base: the sweep passes through "stopped" and restarts.
+--   TOUCH_AXIS_BIAS the other axis must beat the current one by this factor
+--                  before the stick turns a corner; kills diagonal flicker.
+local TOUCH_ENGAGE = 5
+local TOUCH_RELEASE = 2.5
+local TOUCH_LEASH = 10
+local TOUCH_AXIS_BIAS = 1.3
 
-local function touchDirectionFromAxes(x: number, y: number): string?
-    local deadzone = TOUCH_STICK_DEADZONE
-    if x * x + y * y < deadzone * deadzone then
+-- rx/ry are screen-space offsets from the anchor (y grows downward).
+local function touchDirection(rx: number, ry: number, current: string?): string?
+    local threshold = if current then TOUCH_RELEASE else TOUCH_ENGAGE
+    if rx * rx + ry * ry < threshold * threshold then
         return nil
     end
 
-    if math.abs(x) >= math.abs(y) then
-        if x >= 0 then
-            return "right"
-        end
-        return "left"
+    local ax, ay = math.abs(rx), math.abs(ry)
+    local horizontal
+    if current == "left" or current == "right" then
+        horizontal = not (ay > ax * TOUCH_AXIS_BIAS)
+    elseif current == "up" or current == "down" then
+        horizontal = ax > ay * TOUCH_AXIS_BIAS
+    else
+        horizontal = ax >= ay
     end
-    if y > 0 then
-        return "up"
+
+    if horizontal then
+        return if rx >= 0 then "right" else "left"
     end
-    return "down"
+    return if ry > 0 then "down" else "up"
 end
 
 local function updateJoystick(position: Vector3)
@@ -243,25 +266,32 @@ local function updateJoystick(position: Vector3)
         return
     end
 
-    local centerX = joystickBase.AbsolutePosition.X + joystickBase.AbsoluteSize.X / 2
-    local centerY = joystickBase.AbsolutePosition.Y + joystickBase.AbsoluteSize.Y / 2
-    local dx = position.X - centerX
-    local dy = position.Y - centerY
-    local distance = math.sqrt(dx * dx + dy * dy)
-    local travel = math.max(joystickTravel, 1)
-    if distance > travel then
-        local scale = travel / distance
-        dx *= scale
-        dy *= scale
+    if joystickAnchorX == nil or joystickAnchorY == nil then
+        joystickAnchorX = position.X
+        joystickAnchorY = position.Y
+    end
+
+    local rx = position.X - joystickAnchorX
+    local ry = position.Y - joystickAnchorY
+    local distance = math.sqrt(rx * rx + ry * ry)
+    if distance > TOUCH_LEASH then
+        -- Drag the anchor along so the thumb sits exactly LEASH away from it.
+        local pull = (distance - TOUCH_LEASH) / distance
+        joystickAnchorX += rx * pull
+        joystickAnchorY += ry * pull
+        rx = position.X - joystickAnchorX
+        ry = position.Y - joystickAnchorY
     end
 
     if joystickKnob then
-        joystickKnob.Position = UDim2.new(0.5, dx, 0.5, dy)
+        -- The knob shows the push relative to the anchor, scaled so a full
+        -- LEASH of push is a full knob travel.
+        local scale = math.max(joystickTravel, 1) / TOUCH_LEASH
+        joystickKnob.Position = UDim2.new(0.5, rx * scale, 0.5, ry * scale)
         joystickKnob.BackgroundTransparency = 0.04
     end
 
-    -- Screen Y grows downward; touchDirectionFromAxes expects up-positive Y.
-    local direction = touchDirectionFromAxes(dx / travel, -dy / travel)
+    local direction = touchDirection(rx, ry, joystickDirection)
     if direction ~= joystickDirection then
         joystickDirection = direction
         setSource(TOUCH_STICK_SOURCE, direction)
