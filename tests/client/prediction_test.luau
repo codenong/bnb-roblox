@@ -392,15 +392,17 @@ do
     local bomb = pred:getPredictedBombs()[1]
     check("the bomb starts with an owner pass", bomb and bomb.pass["u1"] == true)
 
-    -- Walk right until the owner no longer overlaps the bomb tile.
-    for i = 2, 13 do
+    -- Walk right until the owner no longer overlaps the bomb tile. The tick
+    -- count to clear one tile of overlap depends on the tick rate, so derive it.
+    local leaveTicks = math.ceil(2 * TILE / STEP) + 2
+    for i = 2, 1 + leaveTicks do
         pred:step(i, { "right" }, 1 + (i - 1) * DT)
     end
     check("leaving the bomb tile removes the pass", bomb and bomb.pass["u1"] == nil)
 
     -- Walking back must stop at the bomb instead of passing through it.
-    for i = 14, 26 do
-        pred:step(i, { "left" }, 1 + (i - 1) * DT)
+    for i = 1, leaveTicks do
+        pred:step(leaveTicks + i, { "left" }, 1 + (leaveTicks + i - 1) * DT)
     end
     local x = pred:getTargetPosition()
     check("re-entering the bomb tile is blocked", x > 90, x)

@@ -108,8 +108,9 @@ local lastSnapshot = nil
 -- are already gone reappear). Applying by version keeps the board, the
 -- predictor and the server on the same map. nil = nothing applied yet.
 local appliedGridVer = nil
--- One sequenced command per 30Hz tick. Sequence numbers stay monotonic for the
--- whole session; the server scopes them to the current round.
+-- One sequenced command per simulation tick (Constants.TICK_RATE). Sequence
+-- numbers stay monotonic for the whole session; the server scopes them to the
+-- current round.
 local inputSeq = 0
 local inputAccumulator = 0
 local inputStarted = false
@@ -585,8 +586,35 @@ startLoadingPoll()
 local INPUT_INTERVAL = 1 / Constants.TICK_RATE
 -- A long frame must not fire a burst of catch-up commands. The server buffer is
 -- short, so the client simply skips the missed ticks and reconciles from the
--- next authoritative snapshot.
-local MAX_INPUT_CATCHUP = 3
+-- next authoritative snapshot. 6 ticks at 60Hz ≈ 100ms, the same catch-up
+-- budget the old "3 ticks at 30Hz" gave low-fps devices.
+local MAX_INPUT_CATCHUP = 6
+
+-- One ordered command: seq, optional placement, and one shadow step on the
+-- same timeline as the server buffer.
+local function sendCommand(now: number)
+    inputSeq += 1
+    local dirs = Input.getDirs()
+    local place = pendingPlace and currentState.placeSequenced == true
+    pendingPlace = false
+    local payload = {
+        seq = inputSeq,
+        roundId = currentState.roundId,
+        dirs = dirs,
+    }
+    -- Omit the field entirely on ordinary commands; only a true boolean
+    -- ever requests a placement.
+    if place then
+        payload.place = true
+    end
+    inputRemote:FireServer(payload)
+    -- The shadow advances on the same timeline as the command stream:
+    -- one command, one TICK_RATE step, exactly like the server buffer.
+    local _, placePredicted = prediction:step(inputSeq, dirs, now, place)
+    if placePredicted == true then
+        Audio.play("bomb_set")
+    end
+end
 
 RunService.RenderStepped:Connect(function(dt)
     local now = os.clock()
@@ -607,38 +635,22 @@ RunService.RenderStepped:Connect(function(dt)
     if playing then
         if not inputStarted then
             -- Send the first command on the first frame of the round instead of
-            -- waiting a full tick to accumulate.
+            -- waiting a full tick to accumulate. Exactly one, and this frame's
+            -- dt is consumed by it: a first frame whose dt already spans a whole
+            -- tick must not send a second command on top.
             inputStarted = true
-            inputAccumulator = INPUT_INTERVAL
-        end
-        inputAccumulator = math.min(
-            inputAccumulator + dt,
-            INPUT_INTERVAL * (MAX_INPUT_CATCHUP + 1)
-        )
-        local sent = 0
-        while inputAccumulator >= INPUT_INTERVAL and sent < MAX_INPUT_CATCHUP do
-            inputAccumulator -= INPUT_INTERVAL
-            sent += 1
-            inputSeq += 1
-            local dirs = Input.getDirs()
-            local place = pendingPlace and currentState.placeSequenced == true
-            pendingPlace = false
-            local payload = {
-                seq = inputSeq,
-                roundId = currentState.roundId,
-                dirs = dirs,
-            }
-            -- Omit the field entirely on ordinary commands; only a true boolean
-            -- ever requests a placement.
-            if place then
-                payload.place = true
-            end
-            inputRemote:FireServer(payload)
-            -- The shadow advances on the same timeline as the command stream:
-            -- one command, one 30Hz step, exactly like the server buffer.
-            local _, placePredicted = prediction:step(inputSeq, dirs, now, place)
-            if placePredicted == true then
-                Audio.play("bomb_set")
+            inputAccumulator = 0
+            sendCommand(now)
+        else
+            inputAccumulator = math.min(
+                inputAccumulator + dt,
+                INPUT_INTERVAL * (MAX_INPUT_CATCHUP + 1)
+            )
+            local sent = 0
+            while inputAccumulator >= INPUT_INTERVAL and sent < MAX_INPUT_CATCHUP do
+                inputAccumulator -= INPUT_INTERVAL
+                sent += 1
+                sendCommand(now)
             end
         end
     else

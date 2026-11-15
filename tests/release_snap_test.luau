@@ -12,6 +12,10 @@ local Movement = require("./Movement")
 
 local T = Constants.TILE
 
+-- Full-speed movement per tick: every px literal below is derived from it, so
+-- the test holds at any TICK_RATE (8px per tick at 30Hz, 4px at 60Hz).
+local STEP = 240 * Constants.DT
+
 -- Open room rows 2..6, cols 2..8; solid border elsewhere.
 local function room()
 	local grid = {}
@@ -56,17 +60,19 @@ end
 do
 	local p = walker(3 * T + T / 2, 4 * T + T / 2)
 	holdTicks(p, "right", 3)
-	check("the tap moved three steps off the centre", p.x == 3 * T + T / 2 + 24, tostring(p.x))
-	local statuses = idleTicks(p, 4)
+	check("the tap moved three steps off the centre", p.x == 3 * T + T / 2 + 3 * STEP, tostring(p.x))
+	local glideTicks = math.ceil((T - 3 * STEP) / STEP)
+	local statuses = idleTicks(p, glideTicks + 2)
 	check("a committed release completes the crossing", p.x == 4 * T + T / 2, tostring(p.x))
 	check("the crossing glide actually moved the player", statuses[1] == "moved", statuses[1])
-	check("later idle ticks are quiet", statuses[3] == "idle" and statuses[4] == "idle",
+	check("later idle ticks are quiet",
+		statuses[glideTicks + 1] == "idle" and statuses[glideTicks + 2] == "idle",
 		table.concat(statuses, ","))
 	check("the resting position is a cell centre", (p.x - T / 2) % T == 0, tostring(p.x))
 	check("the other axis never moved during the glide", p.y == 4 * T + T / 2, tostring(p.y))
 end
 
--- A brush at exactly the commit threshold (one full-speed tick = 8px) is not
+-- A brush at exactly the commit threshold (one full-speed tick) is not
 -- committed: the player walks back and the net movement cancels.
 do
 	local p = walker(3 * T + T / 2, 4 * T + T / 2)
@@ -79,11 +85,12 @@ end
 -- Fractional speeds still land exactly on the centre (the final glide step
 -- snaps instead of accumulating float drift).
 do
-	local p = walker(3 * T + T / 2, 4 * T + T / 2, 144) -- 4.8px per tick
+	local p = walker(3 * T + T / 2, 4 * T + T / 2, 144)
+	local fracStep = 144 * Constants.DT
 	holdTicks(p, "right", 3)
 	check("the fractional tap is mid-cell", p.x > 3 * T + T / 2 + Constants.SNAP_COMMIT_PX,
 		tostring(p.x))
-	idleTicks(p, 8)
+	idleTicks(p, math.ceil((T - 3 * fracStep) / fracStep) + 2)
 	check("a fractional release lands exactly on the next centre", p.x == 4 * T + T / 2,
 		tostring(p.x))
 end
@@ -92,15 +99,15 @@ end
 do
 	local p = walker(4 * T + T / 2, 5 * T + T / 2)
 	holdTicks(p, "up", 3)
-	idleTicks(p, 4)
+	idleTicks(p, math.ceil((T - 3 * STEP) / STEP) + 2)
 	check("a vertical release lands on the centre above", p.y == 4 * T + T / 2, tostring(p.y))
 	check("a vertical release leaves x alone", p.x == 4 * T + T / 2, tostring(p.x))
 end
 
 -- An uncommitted fractional brush returns to the centre behind.
 do
-	local p = walker(3 * T + T / 2, 4 * T + T / 2, 144) -- 4.8px per tick
-	holdTicks(p, "right", 1) -- progress 4.8 < 8
+	local p = walker(3 * T + T / 2, 4 * T + T / 2, 144)
+	holdTicks(p, "right", 1) -- progress = one fractional step < SNAP_COMMIT_PX
 	idleTicks(p, 3)
 	check("an uncommitted fractional brush returns", p.x == 3 * T + T / 2, tostring(p.x))
 end
@@ -116,7 +123,7 @@ do
 	idleTicks(p, 3)
 	check("a blocked crossing glide does not move", p.x == before, tostring(p.x))
 	world.bombsByPos[Grid.key(4, 5)] = nil
-	idleTicks(p, 4)
+	idleTicks(p, math.ceil((T - 3 * STEP) / STEP) + 2)
 	check("the same release completes once the bomb is gone", p.x == 4 * T + T / 2, tostring(p.x))
 end
 
@@ -129,7 +136,7 @@ do
 	p.dirs = { "right" }
 	Movement.step(world, p) -- the re-press moves normally
 	check("new input resumes normal movement mid-glide",
-		p.x == 3 * T + T / 2 + 24 + 8 + 8, tostring(p.x))
+		p.x == 3 * T + T / 2 + 5 * STEP, tostring(p.x))
 end
 
 -- A player that never moved has no momentum and no glide.
@@ -143,8 +150,8 @@ end
 -- Releasing exactly on a centre is a no-op.
 do
 	local p = walker(3 * T + T / 2, 4 * T + T / 2)
-	holdTicks(p, "right", 5) -- exactly one cell
-	check("five ticks land on the next centre", p.x == 4 * T + T / 2, tostring(p.x))
+	holdTicks(p, "right", math.round(T / STEP)) -- exactly one cell
+	check("a full cell of ticks lands on the next centre", p.x == 4 * T + T / 2, tostring(p.x))
 	p.dirs = {}
 	local status = Movement.step(world, p)
 	check("an aligned release does not move", status == "idle" and p.x == 4 * T + T / 2,
@@ -155,12 +162,12 @@ end
 -- glides along the NEW axis sense, to the next centre leftward.
 do
 	local p = walker(3 * T + T / 2, 4 * T + T / 2)
-	holdTicks(p, "right", 3) -- committed rightward, x = +24
-	holdTicks(p, "left", 5) -- back past the start centre, x = -16 from it
+	holdTicks(p, "right", 3) -- committed rightward, x = +3 * STEP
+	holdTicks(p, "left", 5) -- back past the start centre
 	check("the reversal is reflected in lastMoveDir", p.lastMoveDir == "left",
 		tostring(p.lastMoveDir))
 	p.dirs = {}
-	idleTicks(p, 4)
+	idleTicks(p, math.ceil(T / STEP) + 2)
 	check("a release after a reversal glides to the next centre leftward",
 		p.x == 2 * T + T / 2, tostring(p.x))
 end

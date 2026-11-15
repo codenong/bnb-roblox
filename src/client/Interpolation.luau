@@ -1,7 +1,7 @@
 -- src/client/Interpolation.luau
 -- Keeps the previous and current snapshot and exposes a 0..1 blend factor.
--- Rendering one snapshot interval behind is intentional: 20Hz network data
--- becomes continuous 60Hz motion.
+-- Rendering one snapshot interval behind is intentional: network-rate snapshot
+-- data (SNAPSHOT_RATE per second) becomes continuous frame-rate motion.
 
 local Interpolation = {}
 Interpolation.__index = Interpolation

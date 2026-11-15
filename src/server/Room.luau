@@ -336,10 +336,10 @@ function Room:_sendAll(name: string, payload: any)
     end
 end
 
--- Send one 20Hz snapshot to every member. The snapshot table is packed once
--- into a compact binary buffer (SnapshotCodec) and the same buffer goes to
--- every member; unpacking on the client restores the exact logical table, so
--- Interpolation/Prediction/Hud see no difference.
+-- Send one snapshot every SNAPSHOT_RATE cadence to every member. The snapshot
+-- table is packed once into a compact binary buffer (SnapshotCodec) and the
+-- same buffer goes to every member; unpacking on the client restores the exact
+-- logical table, so Interpolation/Prediction/Hud see no difference.
 function Room:_sendSnapshot(full)
     local payload = SnapshotCodec.pack(full)
     for _, record in ipairs(self.members) do
@@ -665,10 +665,11 @@ function Room:_resetInputQueues()
 end
 
 -- Drain at most one buffered command per participant per simulation tick.
--- Requiring two queued commands keeps jitter from making the server consume a
--- later command too early; the wait timeout guarantees liveness if the client
--- sends slower than 30Hz or a packet is late. Game keeps the previous direction
--- when nothing is applied, which is the same "held key" behavior as before.
+-- Requiring a full buffer of queued commands keeps jitter from making the
+-- server consume a later command too early; the wait timeout guarantees
+-- liveness if the client sends slower than TICK_RATE or a packet is late. Game
+-- keeps the previous direction when nothing is applied, which is the same
+-- "held key" behavior as before.
 function Room:_applyInputCommands()
     if not self.game then
         return
@@ -1121,7 +1122,8 @@ function Room:setInput(record, payload)
         self.inputQueues[record.id] = state
     end
     -- Duplicate/reordered/old commands are ignored. The client sends one
-    -- command per 30Hz tick, so strictly increasing seq is the normal case.
+    -- command per simulation tick, so strictly increasing seq is the normal
+    -- case.
     if seq <= state.lastQueued then
         return
     end

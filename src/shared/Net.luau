@@ -2,12 +2,12 @@
 -- Remote protocol for BnB. Server calls Net.init() once before use; client uses
 -- Net.get() after the folder replicates.
 --
--- Input        C->S RemoteEvent      {seq, roundId, dirs, place?} 30Hz sequenced
+-- Input        C->S RemoteEvent      {seq, roundId, dirs, place?} TICK_RATE sequenced
 --                                    commands; dirs is oldest press first, newest
 --                                    last. Only place == true requests placement,
 --                                    applied on that command's tick before movement
 --                                    (same pre-move tile as client prediction).
---                                    Server buffers ~2 ticks and acks through Snapshot.
+--                                    Server buffers ~66ms and acks through Snapshot.
 -- Action       C->S RemoteEvent      "place" | "use"      place is the legacy
 --                                    immediate fallback for servers without
 --                                    RoundState.placeSequenced; use stays immediate.
@@ -17,7 +17,7 @@
 -- LeaveTable    C<=>S RemoteFunction () -> ok, reason    leave the current room
 -- RoundState   S->C RemoteEvent      phase/room/mode/roster/timers/yourId/grid/spawns;
 --                                    placeSequenced = true advertises ordered placement
--- Snapshot     S->C RemoteEvent      20Hz simulation snapshot packed into one
+-- Snapshot     S->C RemoteEvent      SNAPSHOT_RATE simulation snapshot packed into one
 --                                    binary buffer per frame (SnapshotCodec.pack,
 --                                    stateless zip/unzip; unpack restores the
 --                                    exact logical table). grid only when it

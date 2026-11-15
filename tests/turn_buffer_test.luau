@@ -96,7 +96,9 @@ do
 	local lastX = p.x
 	local advanced = 0
 	local stopped = false
-	for _ = 1, 45 do
+	-- Budget = the wall-time walk from the press to the corridor end (about six
+	-- tiles) plus slack; derived from the tick rate instead of a tick literal.
+	for _ = 1, math.ceil(6 * T / (240 * Constants.DT)) + 8 do
 		local status = Movement.step(world, p)
 		if status == "blocked" then
 			stopped = true

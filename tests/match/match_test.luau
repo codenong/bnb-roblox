@@ -200,7 +200,7 @@ check("two participants per practice room", playingA and #playingA.roster == 2, 
 check("one bot per practice room", playingA and countBots(playingA.roster) == 1, playingA and countBots(playingA.roster))
 check("alice is a participant of her room", playingA and playingA.yourId == aliceId and not playingA.spectating)
 check("bob is a participant of his room", playingB and playingB.yourId == bobId and not playingB.spectating)
-check("round warmup", playingA and playingA.warmup == 90, playingA and playingA.warmup)
+check("round warmup", playingA and playingA.warmup == Constants.WARMUP_TICKS, playingA and playingA.warmup)
 check("human char persists", playingA and findEntry(playingA.roster, aliceId).char == "haidao")
 check("character select locked in round", MatchService.selectChar(alice, "baobao") == false)
 check("locked character unchanged", findEntry(MatchService.getSync(alice).roster, aliceId).char == "haidao")
@@ -210,7 +210,7 @@ local snapshotB = playingB and playingB.snapshot
 check("getSync carries a snapshot", snapshotA ~= nil)
 check("snapshot has two players", snapshotA and #snapshotA.players == 2, snapshotA and #snapshotA.players)
 check("bob snapshot has two players", snapshotB and #snapshotB.players == 2, snapshotB and #snapshotB.players)
-check("snapshot warmup", snapshotA and snapshotA.warmup == 90, snapshotA and snapshotA.warmup)
+check("snapshot warmup", snapshotA and snapshotA.warmup == Constants.WARMUP_TICKS, snapshotA and snapshotA.warmup)
 check("snapshot tick starts at zero", snapshotA and snapshotA.tick == 0, snapshotA and snapshotA.tick)
 check("snapshot grid rows", snapshotA and type(snapshotA.grid) == "table" and #snapshotA.grid == 13)
 check("snapshot grid width", snapshotA and type(snapshotA.grid[1]) == "string" and #snapshotA.grid[1] == 15)
@@ -223,19 +223,19 @@ check("snapshot slides", snapshotA and type(snapshotA.crateSlides) == "table")
 ---------------------------------------------------------------- 快照只发给房间成员
 
 -- Both rooms have exactly one member and both snapshot buckets were reset at
--- round start. Two simulation ticks produce exactly one snapshot per room; a
--- global broadcast would give each human two.
+-- round start. At the per-tick snapshot cadence two simulation ticks produce
+-- exactly two snapshots per room; a cross-room leak would give each human four.
 Net.reset()
 advance(2)
-check("alice receives only her room snapshot", Net.sentCount(alice, "Snapshot") == 1, Net.sentCount(alice, "Snapshot"))
-check("bob receives only his room snapshot", Net.sentCount(bob, "Snapshot") == 1, Net.sentCount(bob, "Snapshot"))
+check("alice receives only her room snapshots", Net.sentCount(alice, "Snapshot") == 2, Net.sentCount(alice, "Snapshot"))
+check("bob receives only his room snapshots", Net.sentCount(bob, "Snapshot") == 2, Net.sentCount(bob, "Snapshot"))
 check("no global snapshot broadcast", Net.broadcastCount("Snapshot") == 0, Net.broadcastCount("Snapshot"))
 
 ---------------------------------------------------------------- 倒计时与输入隔离
 
-advance(88)
+advance(Constants.WARMUP_TICKS - 2)
 playingA = MatchService.getSync(alice)
-check("warmup ends after 88 more ticks", playingA and playingA.snapshot.warmup == 0, playingA and playingA.snapshot.warmup)
+check("warmup ends after the remaining warmup ticks", playingA and playingA.snapshot.warmup == 0, playingA and playingA.snapshot.warmup)
 check("simulation tick starts after warmup", playingA and playingA.snapshot.tick == 0, playingA and playingA.snapshot.tick)
 
 local bobBefore = findPlayer(MatchService.getSync(bob).snapshot, bobId)

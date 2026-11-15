@@ -192,8 +192,18 @@ do
         return false
     end
 
-    check("pushed to 3,1", pushedTo(3, 1, Constants.PUSH_TICKS + 10))
-    check("pushed to 4,1", pushedTo(4, 1, Constants.PUSH_TICKS + 22))
+    -- One push cycle = accumulate (PUSH_TICKS) + slide (SLIDE_TICKS), both
+    -- wall-time derived from TICK_RATE. The walk to the crate adds ticks that
+    -- depend on the tick rate, so derive those from the player's speed too.
+    local speed = game.players.a.speed or 144
+    local walkTicks = math.ceil(TILE / (speed * Constants.DT))
+    local function pushBudget(walkTiles)
+        return walkTiles * walkTicks + Constants.PUSH_TICKS + Constants.SLIDE_TICKS
+            + math.round(0.25 * Constants.TICK_RATE)
+    end
+
+    check("pushed to 3,1", pushedTo(3, 1, pushBudget(1)))
+    check("pushed to 4,1", pushedTo(4, 1, pushBudget(2)))
 
     game.grid[1][5] = Map.WALL
     check("wall blocks push", not pushedTo(5, 1))
@@ -219,8 +229,10 @@ do
 
     game.grid[1][2] = Map.CRATE
     game:setInput("a", { "right" })
+    -- Accumulate + slide + the walk to the crate (rate-dependent ticks).
+    local pushWalk = math.ceil(TILE / ((game.players.a.speed or 144) * Constants.DT))
     local pushed = false
-    for _ = 1, Constants.PUSH_TICKS + 8 do
+    for _ = 1, Constants.PUSH_TICKS + Constants.SLIDE_TICKS + 2 * pushWalk do
         game:tick()
         if game.grid[1][2] == Map.EMPTY then
             pushed = true
@@ -254,7 +266,7 @@ do
     check("slide started", started)
     check("source still crate", game.grid[1][2] == Map.CRATE, game.grid[1][2])
     game.grid[1][2] = Map.EMPTY
-    tickN(game, 10)
+    tickN(game, Constants.SLIDE_TICKS + 2)
     check("slide cleared", #game.crateSlides == 0, #game.crateSlides)
     check("no target crate", game.grid[1][3] == Map.EMPTY, game.grid[1][3])
 end
@@ -389,7 +401,7 @@ do
         unique += 1
     end
     check("loot targets unique", unique == 3, unique)
-    tickN(game, 12)
+    tickN(game, Constants.LOOT_FLY_BASE + 3 * Constants.LOOT_FLY_PER_TILE)
     check("loot landed", #game.lootShots == 0 and #game.items == 3, #game.items)
 end
 

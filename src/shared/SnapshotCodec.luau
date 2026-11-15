@@ -1,5 +1,5 @@
 -- src/shared/SnapshotCodec.luau
--- Stateless zip/unzip for the 20Hz Snapshot stream ("打包/解包").
+-- Stateless zip/unzip for the per-tick Snapshot stream ("打包/解包").
 --
 -- Game:snapshot() builds the full logical snapshot table (the same shape the
 -- client has always received). pack() turns it into one compact binary buffer

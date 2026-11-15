@@ -208,9 +208,23 @@ function Movement.step(world, player): string
     end
 
     if Movement.tryMove(world, player, dx, dy) then
-        player.lastMoveDir = dir
-        clearPush(player)
-        return "moved"
+        -- A press perpendicular to the momentum that only creeps along a wall
+        -- face (the very next step in the pressed direction is already solid)
+        -- must not steal the momentum: undo the creep and let the assist /
+        -- turn buffer below carry the player to the real window. Without this
+        -- guard, finer tick steps let the body slip a few px inside its own
+        -- open row, register a "turn" that dead-ends against the wall face and
+        -- leave the player stuck short of the lane. Same-axis presses and
+        -- momentum-free players keep the plain move.
+        if player.lastMoveDir ~= nil and player.lastMoveDir ~= dir
+            and Movement.collides(world, player, player.x + dx, player.y + dy) then
+            player.x -= dx
+            player.y -= dy
+        else
+            player.lastMoveDir = dir
+            clearPush(player)
+            return "moved"
+        end
     end
 
     -- Corner assist: nudge toward the adjacent lane center, then retry. A
@@ -228,9 +242,25 @@ function Movement.step(world, player): string
                 if not Movement.collides(world, player, player.x, player.y + shift) then
                     player.y += shift
                     if Movement.tryMove(world, player, dx, 0) then
-                        -- The turn really happened: remember the new axis.
-                        player.lastMoveDir = dir
-                        clearPush(player)
+                        if player.lastMoveDir ~= nil and player.lastMoveDir ~= dir
+                            and Movement.collides(world, player, player.x + dx, player.y) then
+                            -- The shift only enabled a wall-face creep (the same
+                            -- one-step look-ahead as the direct move above, taken
+                            -- from the moved position): undo the move, keep the
+                            -- momentum, and keep the alignment shift only when it
+                            -- does not fight the momentum -- otherwise the
+                            -- pull-back and the turn buffer would oscillate
+                            -- around the centre behind.
+                            player.x -= dx
+                            if fightsMomentum(player, shift, false) then
+                                player.y -= shift
+                                assisted = false
+                            end
+                        else
+                            -- The turn really happened: remember the new axis.
+                            player.lastMoveDir = dir
+                            clearPush(player)
+                        end
                     elseif fightsMomentum(player, shift, false) then
                         player.y -= shift
                         assisted = false
@@ -249,8 +279,21 @@ function Movement.step(world, player): string
                 if not Movement.collides(world, player, player.x + shift, player.y) then
                     player.x += shift
                     if Movement.tryMove(world, player, 0, dy) then
-                        player.lastMoveDir = dir
-                        clearPush(player)
+                        if player.lastMoveDir ~= nil and player.lastMoveDir ~= dir
+                            and Movement.collides(world, player, player.x, player.y + dy) then
+                            -- Mirror of the horizontal branch: undo the wall-face
+                            -- creep, keep the momentum, keep a shift that does
+                            -- not fight the momentum.
+                            player.y -= dy
+                            if fightsMomentum(player, shift, true) then
+                                player.x -= shift
+                                assisted = false
+                            end
+                        else
+                            -- The turn really happened: remember the new axis.
+                            player.lastMoveDir = dir
+                            clearPush(player)
+                        end
                     elseif fightsMomentum(player, shift, true) then
                         player.x -= shift
                         assisted = false

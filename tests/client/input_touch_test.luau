@@ -62,7 +62,7 @@ local function dirs(): string
 end
 
 -- The stick is relative to where the thumb lands. Constants under test (see
--- Input.luau): engage 5px, release 2.5px, leash 6px, axis bias 1.15.
+-- InputTouch.luau): engage 5px, release 2.5px, leash 6px, axis bias 1.15.
 local input = touchAt(centerX, centerY)
 begin(input)
 check("pressing the centre does not move", dirs() == "", dirs())

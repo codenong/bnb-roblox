@@ -509,8 +509,11 @@ do
     prediction:onSnapshot(room.game:snapshot(true), record.id, h.now)
 
     -- Walk right laying bombs, then turn around inside the RTT pipeline and
-    -- walk back into the row. The row ends up on tiles 1..5 of the lane.
-    local phaseA, phaseB = 34, 60
+    -- walk back into the row. The row ends up on tiles 1..5 of the lane. The
+    -- phase lengths are wall-time (1.13s out, 2s back at the old 30Hz literals),
+    -- so they scale with the tick rate and the bomb row keeps its geometry.
+    local phaseA = math.round(34 / 30 * Constants.TICK_RATE)
+    local phaseB = math.round(60 / 30 * Constants.TICK_RATE)
     local laneY = math.floor(serverPlayer.y / Constants.TILE)
     local crossedShadow = nil
     for i = 1, phaseA + phaseB do
@@ -541,7 +544,7 @@ do
     end
 
     -- The server itself must still be east of tile 4: blocked by the row, it
-    -- stays on its own eastmost bomb tile. (During the first ~14 walk-back
+    -- stays on its own eastmost bomb tile. (During the first ~RTT of walk-back
     -- ticks the server is still legitimately executing the rightward pipeline,
     -- so only the settled position pins the scenario.)
     check("the authoritative server blocks the walk-back at the row",

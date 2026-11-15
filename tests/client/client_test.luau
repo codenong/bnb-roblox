@@ -1,6 +1,7 @@
 -- Regression tests for the client entry point (Main.client.luau): snapshot
 -- handling with the real Interpolation module and recording stubs elsewhere.
 local TestLib = require("./testlib")
+local Constants = require("./Constants")
 local Env = require("./ClientEnv")
 
 local check = TestLib.check
@@ -693,8 +694,10 @@ do
         Env.renderStepped(1 / 60)
     end
     local commands = sentCount() - before
-    check("input streams at 30Hz instead of once per frame",
-        commands >= 4 and commands <= 5, commands)
+    -- 8 frames of 1/60s hold one command per tick at the current TICK_RATE.
+    local expected = math.floor(8 * Constants.TICK_RATE / 60 + 0.5)
+    check("input streams at the tick rate instead of once per frame",
+        commands >= expected - 1 and commands <= expected + 1, commands)
     local latest = inputRemote.sent[#inputRemote.sent][1]
     check("sequence numbers increase", latest.seq > firstSeq, latest.seq)
     check("every command is scoped to the current round", latest.roundId == 500)

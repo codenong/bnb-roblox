@@ -1,8 +1,9 @@
 -- src/client/Prediction.luau
 -- Client-side movement and bomb prediction for the local player only.
 --
--- The client advances a shadow player at 30Hz using the same Movement module as
--- the server and records (seq, dirs, place), one entry per command. A snapshot
+-- The client advances a shadow player at Constants.TICK_RATE using the same
+-- Movement module as the server and records (seq, dirs, place), one entry per
+-- command. A snapshot
 -- carries the last sequence the server applied plus the authoritative sub-pixel
 -- position. On arrival we reset the shadow to that position, replay every
 -- unacknowledged command, and turn the difference into a short visual correction
@@ -35,8 +36,9 @@ local BOMB_FUSE_TICKS = Constants.BOMB_FUSE_TICKS
 -- through walls.
 local CORRECTION_TAU = 0.08
 local SNAP_DISTANCE = 24
--- Bound local history if snapshots stop arriving for a long time.
-local HISTORY_LIMIT = 120
+-- Bound local history if snapshots stop arriving for a long time. Four
+-- seconds of commands at the current tick rate.
+local HISTORY_LIMIT = 4 * Constants.TICK_RATE
 -- A predicted bomb that is neither confirmed nor rejected is dropped eventually.
 local PREDICTED_TTL = 3
 local PREDICTED_LIMIT = 16

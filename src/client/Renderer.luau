@@ -326,7 +326,9 @@ local function updateBombUnit(unit, bomb, now: number)
     local sy = (bomb.sy or (bomb.y * T + T / 2)) + visualDy()
     unit.root.Position = UDim2.fromOffset(sx, sy)
 
-    local urgent = not bomb.remote and (bomb.fuse or 999) < 20
+    -- Urgent (fast pulse + fast sprite flip) for the last ~0.67s of the fuse,
+    -- regardless of which tick rate the fuse is counted in.
+    local urgent = not bomb.remote and (bomb.fuse or 999) < math.round(2 / 3 * Constants.TICK_RATE)
     local pulse = if urgent then 1 + 0.08 * math.sin(now * 18) else 1
     local group = if bomb.remote then Sprites.POPO.remote else Sprites.POPO.blue
     local frame = math.floor(now / (if urgent then 0.09 else 0.3)) % 3 + 1

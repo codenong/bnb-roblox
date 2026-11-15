@@ -85,9 +85,11 @@ roomA:step()
 roomB:step()
 roomA:step()
 roomB:step()
-check("Alice receives A snapshot", Net.sentCount(alice, "Snapshot") == 1, Net.sentCount(alice, "Snapshot"))
-check("Cara receives A snapshot", Net.sentCount(cara, "Snapshot") == 1, Net.sentCount(cara, "Snapshot"))
-check("Bob receives only B snapshot", Net.sentCount(bob, "Snapshot") == 1, Net.sentCount(bob, "Snapshot"))
+-- Two steps of room A send two per-tick snapshots to each A member; a
+-- cross-room leak would add B frames on top.
+check("Alice receives only A snapshots", Net.sentCount(alice, "Snapshot") == 2, Net.sentCount(alice, "Snapshot"))
+check("Cara receives only A snapshots", Net.sentCount(cara, "Snapshot") == 2, Net.sentCount(cara, "Snapshot"))
+check("Bob receives only B snapshots", Net.sentCount(bob, "Snapshot") == 2, Net.sentCount(bob, "Snapshot"))
 check("snapshots are never broadcast", Net.broadcastCount("Snapshot") == 0, Net.broadcastCount("Snapshot"))
 
 ---------------------------------------------------------------- 结算也按房间隔离

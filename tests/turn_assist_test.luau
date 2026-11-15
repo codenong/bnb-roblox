@@ -77,11 +77,14 @@ for _, speed in ipairs({ 144, 192, 240 }) do
     check(string.format("speed %d: window lasts %.1f ticks", speed, ticks), ticks >= 4.5)
 end
 
--- Inside the window the turn is prompt, at the centre and at the edges.
+-- Inside the window the turn is prompt, at the centre and at the edges. The
+-- bound is wall-time: shifting at most one step per tick, the assist needs
+-- window/step + 1 ticks whatever the tick rate is (3 ticks at 30Hz, ~6 at 60Hz).
+local promptTicks = math.ceil(Constants.ASSIST_RANGE / (240 * Constants.DT)) + 1
 for _, offset in ipairs({ -Constants.ASSIST_RANGE, -8, 0, 8, Constants.ASSIST_RANGE }) do
     local ok, ticks = enterLane(240, offset, false)
     check(string.format("full speed, press %+d px from the centre enters the lane quickly", offset),
-        ok and ticks <= 3, tostring(ticks))
+        ok and ticks <= promptTicks, tostring(ticks))
 end
 
 -- Just outside the window the player cannot turn (this is what C/D will remove).

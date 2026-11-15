@@ -1,5 +1,5 @@
--- Direct Room tests for the sequenced movement protocol: the 1-2 tick input
--- buffer, acknowledgements, queue bounds, round scoping and the extra snapshot
+-- Direct Room tests for the sequenced movement protocol: the INPUT_BUFFER_TICKS
+-- input buffer, acknowledgements, queue bounds, round scoping and the extra snapshot
 -- fields client prediction needs.
 local TestLib = require("./testlib")
 local check = TestLib.check
@@ -57,28 +57,36 @@ check("an unsequenced array still applies immediately", player().dirs[1] == "rig
     player().dirs[1])
 check("legacy input does not touch the ack", player().ack == 0)
 
----------------------------------------------------------------- 1–2 tick 缓冲
+---------------------------------------------------------------- 输入缓冲
 
 room:setInput(alice, payload(1, { "left" }))
 check("a sequenced command is not applied on arrival", player().dirs[1] == "right")
 
 room:step()
-check("one queued command waits for a second or the timeout", player().dirs[1] == "right")
+check("one queued command waits inside the buffer", player().dirs[1] == "right")
 
-room:step()
+for _ = 2, Constants.INPUT_BUFFER_TICKS do
+    room:step()
+end
 check("a lone command applies after the buffer timeout", player().dirs[1] == "left",
     player().dirs[1])
 check("the ack follows the applied sequence", player().ack == 1, player().ack)
 
-room:setInput(alice, payload(2, { "up" }))
-room:setInput(alice, payload(3, { "down" }))
+-- Exactly a buffer-width queue: the oldest applies at once and the rest wait.
+local lastSeq = 1
+for seq = 2, 1 + Constants.INPUT_BUFFER_TICKS do
+    room:setInput(alice, payload(seq, if seq % 2 == 0 then { "up" } else { "down" }))
+    lastSeq = seq
+end
 room:step()
 check("a full buffer applies the oldest command first",
     player().ack == 2 and player().dirs[#player().dirs] == "up",
     tostring(player().ack) .. ":" .. table.concat(player().dirs, ","))
 room:step()
 check("the second command waits its turn", player().ack == 2, player().ack)
-room:setInput(alice, payload(4, { "left" }))
+
+-- Topping the queue back up to the width keeps draining one command per tick.
+room:setInput(alice, payload(lastSeq + 1, { "left" }))
 room:step()
 check("a continuous stream applies one command per tick",
     player().ack == 3 and player().dirs[#player().dirs] == "down", player().ack)
@@ -86,9 +94,9 @@ check("a continuous stream applies one command per tick",
 ---------------------------------------------------------------- 拒绝乱序 / 旧局 / 非法序号
 
 local queuedBefore = #queue()
-room:setInput(alice, payload(4, { "right" }))
+room:setInput(alice, payload(lastSeq + 1, { "right" }))
 check("a duplicate sequence is ignored", #queue() == queuedBefore, #queue())
-room:setInput(alice, payload(5, { "up" }, roundId - 1))
+room:setInput(alice, payload(lastSeq + 2, { "up" }, roundId - 1))
 check("a previous-round command is ignored", #queue() == queuedBefore, #queue())
 room:setInput(alice, payload(0, { "up" }))
 room:setInput(alice, payload(-3, { "up" }))
@@ -97,32 +105,35 @@ room:setInput(alice, payload(math.huge, { "up" }))
 room:setInput(alice, payload(0 / 0, { "up" }))
 room:setInput(alice, payload("6", { "up" }))
 check("invalid sequences are ignored",
-    #queue() == queuedBefore and queuedSeq() == 4, tostring(queuedSeq()))
+    #queue() == queuedBefore and queuedSeq() == lastSeq + 1, tostring(queuedSeq()))
 
 local stranger = addRecord("InputStranger")
 room:setInput(stranger, payload(1, { "left" }))
 check("a non-member cannot queue input", room.inputQueues[stranger.id] == nil)
 
-room:setInput(alice, payload(5, { "up" }))
+room:setInput(alice, payload(lastSeq + 2, { "up" }))
 check("the next valid sequence is accepted", #queue() == queuedBefore + 1, #queue())
 
 ---------------------------------------------------------------- 队列上限
 
-for seq = 6, 25 do
+local capLast = lastSeq + 22
+for seq = lastSeq + 3, capLast do
     room:setInput(alice, payload(seq, { "right" }))
 end
 local capped = queue()
 check("the queue cannot grow without bound", #capped == Constants.INPUT_QUEUE_LIMIT,
     #capped)
-check("the newest command is kept", capped[#capped].seq == 25, capped[#capped].seq)
+check("the newest command is kept", capped[#capped].seq == capLast, capped[#capped].seq)
 check("the oldest commands are dropped",
-    capped[1].seq == 25 - Constants.INPUT_QUEUE_LIMIT + 1, capped[1].seq)
+    capped[1].seq == capLast - Constants.INPUT_QUEUE_LIMIT + 1, capped[1].seq)
 
-for _ = 1, Constants.INPUT_QUEUE_LIMIT + 1 do
+-- Worst case every drained command waits out the full buffer timeout, so the
+-- budget scales with both the queue cap and the buffer width.
+for _ = 1, Constants.INPUT_QUEUE_LIMIT * Constants.INPUT_BUFFER_TICKS + 1 do
     room:step()
 end
 check("draining the capped queue reaches the newest sequence",
-    player().ack == 25, player().ack)
+    player().ack == capLast, player().ack)
 check("the drained queue is empty", #queue() == 0, #queue())
 
 ---------------------------------------------------------------- 快照字段
@@ -136,7 +147,7 @@ for _, candidate in ipairs(snapshot.players) do
     end
 end
 check("the snapshot includes the local player", entry ~= nil)
-check("snapshots carry the applied sequence", entry and entry.ack == 25,
+check("snapshots carry the applied sequence", entry and entry.ack == capLast,
     entry and entry.ack)
 check("snapshots carry a sub-pixel position",
     entry and type(entry.fx) == "number" and type(entry.fy) == "number")
@@ -181,13 +192,14 @@ check("the previous round's queue was cleared", room.inputQueues[alice.id] == ni
 
 local newRoundId = room:getSync(alice).roundId
 check("the new round has a new id", newRoundId ~= roundId)
-room:setInput(alice, payload(26, { "down" }, newRoundId))
-room:step()
-room:step()
-check("the new round accepts the next sequence", player().ack == 26, player().ack)
+room:setInput(alice, payload(capLast + 1, { "down" }, newRoundId))
+for _ = 1, Constants.INPUT_BUFFER_TICKS do
+    room:step()
+end
+check("the new round accepts the next sequence", player().ack == capLast + 1, player().ack)
 
 -- A late command from the finished round must not leak into the new one.
-room:setInput(alice, payload(27, { "left" }, roundId))
+room:setInput(alice, payload(capLast + 2, { "left" }, roundId))
 check("a stale-round command after the reset is ignored", #queue() == 0, #queue())
 
 TestLib.finish()

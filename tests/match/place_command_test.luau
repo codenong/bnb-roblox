@@ -115,8 +115,8 @@ do
         state.placeSequenced)
 
     local player = room.game.players[alice.id]
-    -- One tick moves 4.8px, so 78 -> 82.8 crosses from tile 1 to tile 2. The
-    -- bomb must stay on the pre-move tile.
+    -- One tick's move (speed * DT) crosses from tile 1 into tile 2. The bomb
+    -- must stay on the pre-move tile.
     player.x = 78
     player.y = 60
 
@@ -125,7 +125,9 @@ do
     room:step()
     check("the first buffered tick does not apply the command",
         player.ack == 0 and #room.game.bombs == 0)
-    room:step()
+    for _ = 2, Constants.INPUT_BUFFER_TICKS do
+        room:step()
+    end
 
     check("the command's tick advances the ack", player.ack == 1, player.ack)
     check("the command's tick creates the bomb", #room.game.bombs == 1)
@@ -157,8 +159,9 @@ do
 
     room:setInput(alice, payload(room, 1, {}, true))
     check("place counts as round activity", room.roundActivity[alice.id] == true)
-    room:step()
-    room:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        room:step()
+    end
     check("an empty-direction placement still advances the ack", player.ack == 1, player.ack)
     check("an empty-direction placement still creates a bomb", #room.game.bombs == 1)
     check("the player has no movement direction", #player.dirs == 0)
@@ -179,7 +182,9 @@ do
         queued[1] and queued[1].place == false
             and queued[2].place == false
             and queued[3].place == false)
-    for _ = 1, 6 do
+    -- Each queued command waits out the buffer timeout, so the budget covers
+    -- three sequential timeouts at any tick rate.
+    for _ = 1, 3 * Constants.INPUT_BUFFER_TICKS + 2 do
         room:step()
     end
     check("all three commands are acknowledged", player.ack == 3, player.ack)
@@ -195,8 +200,9 @@ do
     local player = room.game.players[alice.id]
     room.game.warmup = 5
     room:setInput(alice, payload(room, 1, {}, true))
-    room:step()
-    room:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        room:step()
+    end
     check("a warmup placement is rejected but acknowledged",
         player.ack == 1 and #room.game.bombs == 0,
         tostring(player.ack) .. ":" .. tostring(#room.game.bombs))
@@ -206,12 +212,14 @@ do
     local sameAlice = sameRecords[1]
     local samePlayer = sameRoom.game.players[sameAlice.id]
     sameRoom:setInput(sameAlice, payload(sameRoom, 1, {}, true))
-    sameRoom:step()
-    sameRoom:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        sameRoom:step()
+    end
     check("the first bomb exists", #sameRoom.game.bombs == 1)
     sameRoom:setInput(sameAlice, payload(sameRoom, 2, {}, true))
-    sameRoom:step()
-    sameRoom:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        sameRoom:step()
+    end
     check("a same-tile placement is rejected but acknowledged",
         samePlayer.ack == 2 and #sameRoom.game.bombs == 1,
         tostring(samePlayer.ack) .. ":" .. tostring(#sameRoom.game.bombs))
@@ -221,14 +229,16 @@ do
     local capAlice = capRecords[1]
     local capPlayer = capRoom.game.players[capAlice.id]
     capRoom:setInput(capAlice, payload(capRoom, 1, {}, true))
-    capRoom:step()
-    capRoom:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        capRoom:step()
+    end
     check("the cap test bomb exists", #capRoom.game.bombs == 1)
     capPlayer.x = 140
     capPlayer.y = 60
     capRoom:setInput(capAlice, payload(capRoom, 2, {}, true))
-    capRoom:step()
-    capRoom:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        capRoom:step()
+    end
     check("the max-bomb placement is rejected but acknowledged",
         capPlayer.ack == 2 and #capRoom.game.bombs == 1,
         tostring(capPlayer.ack) .. ":" .. tostring(#capRoom.game.bombs))
@@ -300,8 +310,9 @@ do
     local alice, bob = records[1], records[2]
     room:setInput(alice, payload(room, 1, {}, true))
     room:setInput(bob, payload(room, 1, {}, true))
-    room:step()
-    room:step()
+    for _ = 1, Constants.INPUT_BUFFER_TICKS do
+        room:step()
+    end
 
     check("both players' bombs were created", #room.game.bombs == 2, #room.game.bombs)
     local fx = bombFx()

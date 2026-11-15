@@ -278,7 +278,7 @@ function Game:useItem(id: string): boolean
         player.used.needle += 1
         player.trapped = false
         player.trapTicks = 0
-        player.grace = Constants.EXPLOSION_TICKS + 10
+        player.grace = Constants.EXPLOSION_TICKS + Constants.EXTRA_GRACE_TICKS
         return true
     end
     return self:placeBomb(id, true)
@@ -635,7 +635,7 @@ function Game:applyFlameDamage()
             if danger[pos] and player.grace <= 0 then
                 if player.mount then
                     player.mount = nil
-                    player.grace = Constants.EXPLOSION_TICKS + 10
+                    player.grace = Constants.EXPLOSION_TICKS + Constants.EXTRA_GRACE_TICKS
                 else
                     player.trapped = true
                     player.trapTicks = Constants.TRAP_TICKS

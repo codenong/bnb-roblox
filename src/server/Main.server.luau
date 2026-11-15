@@ -369,6 +369,8 @@ end
 
 ---------------------------------------------------------------- 主循环
 
+-- Fixed-step simulation at Constants.TICK_RATE on top of the variable-rate
+-- Heartbeat.
 local accumulator = 0
 
 RunService.Heartbeat:Connect(function(dt)
@@ -376,14 +378,16 @@ RunService.Heartbeat:Connect(function(dt)
     accumulator += math.min(dt, 0.25)
 
     local steps = 0
-    while accumulator >= Constants.DT and steps < 4 do
+    while accumulator >= Constants.DT and steps < 8 do
         MatchService.step()
         accumulator -= Constants.DT
         steps += 1
     end
 
-    -- Do not spiral after a long frame; drop the excess backlog.
-    if steps == 4 then
+    -- Do not spiral after a long frame; drop the excess backlog. The cap keeps
+    -- roughly the same catch-up wall-time budget as the old "4 steps at 30Hz"
+    -- (8 x 16.7ms ≈ 133ms at 60Hz).
+    if steps == 8 then
         accumulator = math.min(accumulator, Constants.DT)
     end
 end)

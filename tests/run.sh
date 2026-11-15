@@ -116,7 +116,7 @@ echo "== shop_exit_test.luau (shop entry as a room exit, roomless shop)"
 "$LUAU" "$MATCH_BUILD/shop_exit_test.luau"
 echo "== shop_service_test.luau (receipts, durability, direct store path)"
 "$LUAU" "$MATCH_BUILD/shop_service_test.luau"
-echo "== input_buffer_test.luau (sequenced input, 2-tick buffer, acks, snapshot fields)"
+echo "== input_buffer_test.luau (sequenced input, buffer, acks, snapshot fields)"
 "$LUAU" "$MATCH_BUILD/input_buffer_test.luau"
 echo "== place_command_test.luau (ordered placement, pre-move tile, Fx seq, legacy action)"
 "$LUAU" "$MATCH_BUILD/place_command_test.luau"
@@ -172,15 +172,20 @@ for scenario in event poll empty limit; do
 done
 
 # --- the real Input.luau with stubbed UserInputService / GuiService ---
+# The hub (Input.luau) and its three device modules are each prepended with the
+# same ClientEnv aliases; the hub's script.Parent requires are rewritten to
+# relative requires like everywhere else.
 INPUT_BUILD=build/input
 mkdir -p "$INPUT_BUILD"
-{
-  printf 'local __env = require("./ClientEnv")\n'
-  printf 'local game, Instance, Enum, warn = __env.game, __env.Instance, __env.Enum, print\n'
-  printf 'local UDim, UDim2 = __env.UDim, __env.UDim2\n'
-  printf 'local Vector2, Vector3, Color3 = __env.Vector2, __env.Vector3, __env.Color3\n'
-  cat ../src/client/Input.luau
-} > "$INPUT_BUILD/Input.luau"
+for name in Input InputKeyboard InputGamepad InputTouch; do
+  {
+    printf 'local __env = require("./ClientEnv")\n'
+    printf 'local game, Instance, Enum, warn = __env.game, __env.Instance, __env.Enum, print\n'
+    printf 'local UDim, UDim2 = __env.UDim, __env.UDim2\n'
+    printf 'local Vector2, Vector3, Color3 = __env.Vector2, __env.Vector3, __env.Color3\n'
+    sed -E 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' "../src/client/$name.luau"
+  } > "$INPUT_BUILD/$name.luau"
+done
 cp client/ClientEnv.luau client/input_test.luau client/input_touch_test.luau testlib.luau "$INPUT_BUILD/"
 
 echo "== input_test.luau (keyboard / arrows / gamepad mapping)"

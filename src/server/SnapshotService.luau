@@ -1,7 +1,8 @@
 -- src/server/SnapshotService.luau
--- Per-room 20Hz snapshot cadence inside the fixed 30Hz simulation. Each Room
--- owns an instance, so two rooms never share an accumulator or a recipient
--- list. The caller supplies the send callback (room-scoped, not broadcast).
+-- Per-room snapshot cadence (Constants.SNAPSHOT_RATE per second) inside the
+-- fixed-step simulation. Each Room owns an instance, so two rooms never share
+-- an accumulator or a recipient list. The caller supplies the send callback
+-- (room-scoped, not broadcast).
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 

@@ -255,7 +255,7 @@ do
     room:step()
     check("the no-action room is playing", room:getPhase() == "playing")
 
-    advanceUntilEnded(room, 800)
+    advanceUntilEnded(room, Constants.WARMUP_TICKS + Constants.VERSUS_NO_ACTION_TICKS + 20)
     local result = room:getSync(alice).lastResult
     check("both idle players end the round", room:getPhase() == "ended")
     check("a double no-action round is a draw", result and result.draw == true and result.reason == "no_action")
@@ -282,7 +282,7 @@ do
     room:addMember(idler)
     room:step()
     room:setInput(mover, { "up" })
-    advanceUntilEnded(room, 800)
+    advanceUntilEnded(room, Constants.WARMUP_TICKS + Constants.VERSUS_NO_ACTION_TICKS + 20)
     local result = room:getSync(mover).lastResult
     check("an active player beats an idle one", result and result.winnerId == mover.id
         and result.reason == "no_action")

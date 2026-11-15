@@ -77,7 +77,7 @@ for _, brokenFirst in ipairs({ true, false }) do
     local a, b = join("A"), join("B")
     local bad, good = if brokenFirst then a else b, if brokenFirst then b else a
 
-    check(label .. ": both reach playing", runUntilPlaying(a, 400) and runUntilPlaying(b, 400))
+    check(label .. ": both reach playing", runUntilPlaying(a, Constants.WAITING_TICKS + 5) and runUntilPlaying(b, Constants.WAITING_TICKS + 5))
     local badRoom, goodRoom = MatchService.getRoomFor(bad), MatchService.getRoomFor(good)
     local before = progress(goodRoom.game)
     breakSnapshots(badRoom)
@@ -99,7 +99,7 @@ end
 do
     fresh()
     local a, b, c = join("A"), join("B"), join("C")
-    runUntilPlaying(a, 400); runUntilPlaying(b, 400); runUntilPlaying(c, 400)
+    runUntilPlaying(a, Constants.WAITING_TICKS + 5); runUntilPlaying(b, Constants.WAITING_TICKS + 5); runUntilPlaying(c, Constants.WAITING_TICKS + 5)
     local roomA, roomB, roomC = MatchService.getRoomFor(a), MatchService.getRoomFor(b), MatchService.getRoomFor(c)
     local before = progress(roomC.game)
     breakSnapshots(roomA)
@@ -151,7 +151,7 @@ do
     local p = join("Rare")
     local replaced = 0
     for _ = 1, 5 do
-        runUntilPlaying(p, 400)
+        runUntilPlaying(p, Constants.WAITING_TICKS + 5)
         local room = MatchService.getRoomFor(p)
         if room and room:getPhase() == "playing" then
             breakSnapshots(room)
@@ -170,7 +170,7 @@ end
 do
     fresh()
     local p = join("Leaver")
-    runUntilPlaying(p, 400)
+    runUntilPlaying(p, Constants.WAITING_TICKS + 5)
     breakSnapshots(MatchService.getRoomFor(p))
     stepN(5)
     local record = PlayerService.remove(p)
