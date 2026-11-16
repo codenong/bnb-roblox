@@ -20,7 +20,7 @@ local LAYOUT = {
     "o#o.xxx.xxx.o#o",
     "oo.x.o.x.o.x.oo",
     "o.x.ooo.ooo.x.o",
-    "o.xooooHoooox.o",
+    "o.xoooo.oooox.o",
     "o.x.ooHHHoo.x.o",
     "o.xoooHHHooox.o",
     "oo.x.ooooo.x.oo",

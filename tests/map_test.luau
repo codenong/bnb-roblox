@@ -49,7 +49,7 @@ end
 check("soft+crate >= 100", soft >= 100, soft)
 check("crate >= 20", crates >= 20, crates)
 check("cannons at four corners", walls == 4, walls)
-check("central mast shape", houses == 7, houses)
+check("central mast shape", houses == 6, houses)
 
 for _, pos in ipairs({ { 1, 1 }, { 13, 1 }, { 1, 11 }, { 13, 11 } }) do
     check(
@@ -57,12 +57,13 @@ for _, pos in ipairs({ { 1, 1 }, { 13, 1 }, { 1, 11 }, { 13, 11 } }) do
         grid[pos[2]][pos[1]] == Map.WALL
     )
 end
-for _, pos in ipairs({ { 7, 4 }, { 6, 5 }, { 7, 5 }, { 8, 5 }, { 6, 6 }, { 7, 6 }, { 8, 6 } }) do
+for _, pos in ipairs({ { 6, 5 }, { 7, 5 }, { 8, 5 }, { 6, 6 }, { 7, 6 }, { 8, 6 } }) do
     check(
         string.format("mast (%d,%d)", pos[1], pos[2]),
         grid[pos[2]][pos[1]] == Map.HOUSE
     )
 end
+check("mast tip open", grid[4][7] == Map.EMPTY)
 check("flag tip walkable", grid[3][7] == Map.EMPTY)
 
 for y = 0, ROWS - 1 do
