@@ -23,6 +23,12 @@ local joystickTravel = 54
 -- Only the picture of the base stays put.
 local joystickAnchorX = nil
 local joystickAnchorY = nil
+-- Tap detection: when and where the thumb landed, and whether this touch ever
+-- pushed far enough to start moving.
+local joystickDownClock = 0
+local joystickDownX = 0
+local joystickDownY = 0
+local joystickEngaged = false
 
 -- The touch joystick owns one source. Keeping it separate from keyboard and
 -- gamepad sources means releasing it never clears a direction still held on
@@ -48,6 +54,26 @@ local TOUCH_RELEASE = 2.5
 local TOUCH_LEASH = 6
 local TOUCH_AXIS_BIAS = 1.15
 
+-- Tap = one step. Walking is quantised to whole cells by the release glide in
+-- Movement, and at full speed a cell is only ~167 ms of travel, so a thumb that
+-- rests on the stick for "a light press" (100-250 ms) lands on one cell or two
+-- depending on a few milliseconds. A quick touch that never pushed past
+-- TOUCH_ENGAGE is therefore not a drag at all: it is a tap on one side of the
+-- base, like a D-pad button, and sends a fixed pulse that is always one cell.
+--   TOUCH_TAP_MAX_SECONDS  longest contact that still counts as a tap.
+--   TOUCH_TAP_MIN_OFFSET   the landing must be this far from the base centre
+--                          (the base radius is 53px) to pick a side; a tap on
+--                          the middle does nothing, as before.
+--   TOUCH_TAP_PULSE_TICKS  commands the direction is held for. 3 ticks (50 ms
+--                          at 60Hz) is past the glide's commit distance at every
+--                          speed and still far short of a second cell.
+local TOUCH_TAP_MAX_SECONDS = 0.20
+local TOUCH_TAP_MIN_OFFSET = 14
+local TOUCH_TAP_PULSE_TICKS = 3
+
+-- Injectable so tests can fix the contact time (seconds).
+local clock = os.clock
+
 local function setTouchSource(direction: string?)
     if ctx then
         ctx.setSource(TOUCH_STICK_SOURCE, direction)
@@ -59,6 +85,7 @@ local function resetJoystick()
     joystickDirection = nil
     joystickAnchorX = nil
     joystickAnchorY = nil
+    joystickEngaged = false
     setTouchSource(nil)
     if joystickKnob then
         joystickKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
@@ -122,8 +149,35 @@ local function updateJoystick(position: Vector3)
     local direction = touchDirection(rx, ry, joystickDirection)
     if direction ~= joystickDirection then
         joystickDirection = direction
+        if direction then
+            joystickEngaged = true
+        end
         setTouchSource(direction)
     end
+end
+
+-- Which side of the base a finished touch tapped, or nil if it was not a tap.
+-- Called before the joystick state is reset.
+local function tapDirection(): string?
+    if joystickEngaged or not joystickBase then
+        return nil
+    end
+    if clock() - joystickDownClock > TOUCH_TAP_MAX_SECONDS then
+        return nil
+    end
+
+    local centerX = joystickBase.AbsolutePosition.X + joystickBase.AbsoluteSize.X / 2
+    local centerY = joystickBase.AbsolutePosition.Y + joystickBase.AbsoluteSize.Y / 2
+    local ox = joystickDownX - centerX
+    local oy = joystickDownY - centerY
+    if ox * ox + oy * oy < TOUCH_TAP_MIN_OFFSET * TOUCH_TAP_MIN_OFFSET then
+        return nil
+    end
+
+    if math.abs(ox) >= math.abs(oy) then
+        return if ox >= 0 then "right" else "left"
+    end
+    return if oy > 0 then "down" else "up"
 end
 
 ---------------------------------------------------------------- 摇杆 UI
@@ -245,6 +299,10 @@ local function createTouchControls(gui: ScreenGui)
         if input.UserInputType == Enum.UserInputType.Touch
             or input.UserInputType == Enum.UserInputType.MouseButton1 then
             joystickTouch = input
+            joystickDownClock = clock()
+            joystickDownX = input.Position.X
+            joystickDownY = input.Position.Y
+            joystickEngaged = false
             updateJoystick(input.Position)
         end
     end)
@@ -277,7 +335,11 @@ function Touch.init(context, gui)
 
     UserInputService.InputEnded:Connect(function(input)
         if input == joystickTouch then
+            local tap = tapDirection()
             resetJoystick()
+            if tap then
+                ctx.pulseSource(TOUCH_STICK_SOURCE, tap, TOUCH_TAP_PULSE_TICKS)
+            end
         end
     end)
 
@@ -314,6 +376,11 @@ end
 
 function Touch.reset()
     resetJoystick()
+end
+
+-- Test hook: replace the clock used to time a tap (seconds).
+function Touch._setClock(fn: () -> number)
+    clock = fn
 end
 
 return Touch

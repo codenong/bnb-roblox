@@ -1,0 +1,444 @@
+diff --git a/README.md b/README.md
+index c0711fc..2f711ae 100644
+--- a/README.md
++++ b/README.md
+@@ -13,7 +13,7 @@
+ - **角色颜色**：等待界面可在现有六套配色（红、蓝、绿、黄、紫、橙）中点击选择。宝宝默认红色、小海盗默认蓝色，两个角色分别记住自己的颜色；切换角色会恢复该角色保存的选择，并随档案持久化。同一房间允许重复颜色，靠头顶名字区分。颜色选择与选角共用等待阶段和最后 3 秒锁定窗口；练习与对战都生效，观战者等待时可改、开局后不可改。颜色只改变外观，出生位置、座位顺序和对局规则不变。角色皮肤（付费外观）仍不在本轮范围。
+ - **界面与聊天**：桌面设计画布仍为 980×600，但 `UIScale` 上限从 1.15 提高到 1.6；1080p 下棋盘约为 960×832，手机布局保持不变。默认通过 `TextChatService.ChatWindowConfiguration.Enabled` 和 `ChatInputBarConfiguration.Enabled` 隐藏原生聊天窗口与输入栏；右上角“聊天”按钮按需打开/关闭，进入对局时自动收起。聊天关闭时不会遮挡棋盘，消息仍由 TextChatService 接收；这是纯客户端改动，不涉及服务端协议或存档。
+ - **视觉扁平化**：默认开启轻量扁平化，箱子和木箱严格占一个格子，炮台/墙从 2 格高降到约 1.3 格，中央桅杆从 5×6 格缩到 4×4.8 格，角色和道具贴近格子中心、取消额外下沉，减少“看着能走却撞墙”的视觉误差。右上角“扁平/立体”按钮可在当前会话内随时切回原来的伪 3D 外观；碰撞、快照、协议和存档完全不受影响，开关默认不持久化。
+-- **触屏摇杆**：手机对局左下角是单个四向虚拟摇杆（底盘 106px、摇杆头 40px），按住底盘任意位置即可，按主轴映射到上/下/左/右，不做斜向。摇杆是**相对式**的：原点是手指落下的位置，落下本身不会触发移动；推过 5px 才起步，回到 2.5px 以内才停（滞回，防止手抖）；手指离原点超过 6px 时原点跟着手指走，所以不管手指冲出底盘多远，停下约回拉 4px、反向约回拉 11px 即可。换轴需要另一轴超过当前轴 1.15 倍，转弯约需拇指横切 7px，同时避免斜向抖动。摇杆头显示相对原点的推动量。只跟随第一根手指，泡泡和道具按钮仍在右下角，可同时按住。常量见 `Input.luau` 的 `TOUCH_ENGAGE/RELEASE/LEASH/AXIS_BIAS`。服务端协议与四方向移动规则不变。
++- **触屏摇杆**：手机对局左下角是单个四向虚拟摇杆（底盘 106px、摇杆头 40px），按住底盘任意位置即可，按主轴映射到上/下/左/右，不做斜向。摇杆是**相对式**的：原点是手指落下的位置，落下本身不会触发移动；推过 5px 才起步，回到 2.5px 以内才停（滞回，防止手抖）；手指离原点超过 6px 时原点跟着手指走，所以不管手指冲出底盘多远，停下约回拉 4px、反向约回拉 11px 即可。换轴需要另一轴超过当前轴 1.15 倍，转弯约需拇指横切 7px，同时避免斜向抖动。摇杆头显示相对原点的推动量。只跟随第一根手指，泡泡和道具按钮仍在右下角，可同时按住。常量见 `Input.luau` 的 `TOUCH_ENGAGE/RELEASE/LEASH/AXIS_BIAS`。**点按 = 一步**：快速点按（接触 ≤0.20s、没推过 5px 起步线、落点离底盘中心 ≥14px）不算拖动，而是按落点所在方位发一个固定 3 条命令的方向脉冲，经 `Movement` 的松手吸附恰好走一格，与手指实际按了多久无关（满速下一格只有约 167ms，原先 100–250ms 的“轻按”会在 1 格和 2 格之间摇摆）；点中间、点太久、拖过的都不算。脉冲由 `Input.sample()` 在 `Main` 每发一条命令时计数过期，`getDirs()` 仍是无副作用的窥视。服务端协议与四方向移动规则不变。
+ - **转角辅助**：转弯时，只要玩家离通道中心不超过 `ASSIST_RANGE`（`Constants.luau`，18px，格子半宽 20px，必须小于 20）就会被滑入通道；窗口约 37px，满速（240px/s）约 155ms，原先 12px 时约 104ms。`Game` 与客户端预测共用 `Movement`，两侧自动一致。窗口之外提前按下新方向时不再停住：由"提前转弯缓冲"接手（见下一条）。
+ - **提前转弯缓冲与松手吸附**：`Movement.step` 现在维护 `lastMoveDir`（最后成功移动的方向）。想转的新方向被挡时，角色沿 `lastMoveDir` 继续滑行（纯惯性、每 tick 一整步、绝不回退），进入转角窗口后由辅助自动完成转弯——提前按方向不再"撞墙停住"；贴墙按住被挡方向时，辅助里逆着动量的回拽会被撤销，避免在车道中心两侧 8px 振荡。松手（无输入）时沿最后移动轴吸附格心：偏离后方格心超过 `SNAP_COMMIT_PX`（`Constants.luau`，8px）视为已跨格、补完到前方格心——满速下 ≥2 tick（66ms）的点按精确走一格、基础速度 120 下 ≥3 tick；不足则退回后方格心（≤8px），轻微蹭动抵消。角色静止位置因此离散到格心，松手延迟带来的几 px 漂移在停下时消失。缓冲滑行中按住方向顶住炸弹/箱子仍会触发踢/推（`buffered` 与 `blocked` 同样进入 kick/push），按住的方向被挡且原方向也不通时才真正停住。`lastMoveDir` 随快照 `dir` 字段下发（`SnapshotCodec` 版本升到 3，每玩家 +1 字节），预测器在重放未确认命令前重新种子，两侧逐 tick 一致；旧服务器不带该字段时客户端自动停用这两个行为。
+ - **移动预测与输入序号**：客户端以 60Hz（每模拟 tick 一条）发送 `{ seq, roundId, dirs, place? }`。`seq` 在本次客户端会话内单调递增，`roundId` 防止旧局命令串入新局。服务端每名玩家维护一个有界命令队列（上限 12），最多缓冲约 4 个模拟 tick（≈66ms 墙钟时间），每个 tick 最多应用 1 条；快照回传最后应用的 `ack`，重复、乱序、非法序号和旧局命令直接丢弃。客户端用与服务器相同的 `Movement` 模块在本地预演自己的移动，收到快照后从权威亚像素位置 `fx/fy` 出发，只回放 `seq > ack` 的命令；小误差在约 0.08 秒内平滑收敛，超过 24px 直接贴合。热身、死亡、被困、观战或缺少 `ack` 时不做预测，退回原有快照插值。放泡泡也走有序命令：按空格时下一次 `Input` 带 `place = true`，服务器在处理该命令的 tick、移动之前决定落点，与客户端预测使用同一个移动前格子，不信任客户端上报的格子；本地预测泡泡和音效立即出现，服务器快照按 `owner + seq` 确认后合并，被拒绝（同格、上限、warmup 等）则撤掉。旧服务器没有 `RoundState.placeSequenced` 时回退到即时 `Action("place")`；`use`（针/遥控）仍是即时 `Action`，不在有序命令流中。客户端预测器还按服务器相同的规则维护炸弹通行证：影子离开炸弹格就收回 pass（与 `Game:updateBombPass` 每 tick 的收回时机对齐，且对快照投影里的服务器炸弹同样生效）——高 RTT 下快照管线落后十余 tick，里面还带着“刚放完、人未走远”的活 pass，旧逻辑会让影子直接穿回自己的炸弹行再被服务器拉回，屏幕上表现为角色反复穿过应该挡路的炸弹；现在两侧一致，回头即被挡住。
+@@ -290,7 +290,7 @@ assets/       prepared 输出与上传缓存（.cache 不提交）
+ 
+ ## 开发状态
+ 
+-- 共享引擎、房间化服务端状态机、数据层、对战桌子、商店、角色颜色、界面缩放、聊天开关、视觉扁平化、触屏摇杆、客户端预测与客户端入口通过 **2371 项 headless 测试**（快照打包/解包往返、Room 发帧与损坏帧拒绝、高 RTT 回头穿越自己炸弹行的回归均已覆盖，触屏摇杆的落点静默、启动/释放滞回、边缘反向与轴向滞回，手柄摇杆的滞回、轴向偏置与松手回弹保护，以及转角窗口宽度、提前转弯缓冲与松手吸附格心的落点/停位/踢泡泡奇偶均有断言）；其中包含多房间隔离、快照/结算受众、练习 1v1 组合、对战倒计时取消/锁定/重赛、换桌即离座与空房间回收、常驻对战房预创建/复用/重置、临时房主转移、房名归一化/可见字符下限/不可见字符拒绝/输入截断与注入文本过滤、密码座位/观战/限流/快速对战跳过、观战者驱逐通知、浏览期间不自动重建练习房间、重复离座幂等、观战只读且永不补位、离座/掉线/无操作判负、多桌上限与换桌、战绩规则、N 人房间配置、房间故障隔离、选角与颜色锁定、按角色记忆颜色、重复颜色/观战选色、输入映射（键盘/方向键/手柄/触屏摇杆）、带序号输入的缓冲与 ack、有序放置的移动前落点/owner+seq 确认/旧 Action 回退、本地移动与泡泡预测、未确认命令回放、炸弹通行证/滑箱预测、高 RTT 下影子离开炸弹格即收回 pass（与 `Game:updateBombPass` 同步，回头不再穿过自己的炸弹行）、延迟+抖动下的网络对账收敛、服务器 Game 与客户端 Prediction 逐帧对拍、快照二进制压缩的编解码往返与损坏帧拒绝、gridVer 地图版本在乱序快照与 ack 回退下的单调应用、档案锁与 fencing、响应丢失/回调重跑故障注入、免费/购买库存、自动携带与上限、练习零携带零消耗、库存摘要、按实际使用结算与免费优先、地图拾取不超额、离座/重置/关服幂等结算、商店入口先离房与房间无关商店快照、购买收据幂等与持久化、有界购买历史与重复回调刷新、断线直存、释放竞争二次落盘、加载中提示与超时重试，以及结算/离场/心跳/关服保存测试。部分测试覆盖了 `client_test` 中的密码/设置/通知/商店进店离房/“我的道具”/购买接线、输入序号发送节奏、有序 `place` 的发送与旧服务器回退、预测泡泡的渲染/音效去重和本地渲染位置，以及聊天默认隐藏、按钮切换、进入对局自动收起和扁平/立体模式切换接线。
++- 共享引擎、房间化服务端状态机、数据层、对战桌子、商店、角色颜色、界面缩放、聊天开关、视觉扁平化、触屏摇杆、客户端预测与客户端入口通过 **2405 项 headless 测试**（快照打包/解包往返、Room 发帧与损坏帧拒绝、高 RTT 回头穿越自己炸弹行的回归均已覆盖，触屏摇杆的落点静默、启动/释放滞回、边缘反向与轴向滞回，手柄摇杆的滞回、轴向偏置与松手回弹保护，触屏点按脉冲的方位/时限/条数及其与 `Movement` 的一格对拍，以及转角窗口宽度、提前转弯缓冲与松手吸附格心的落点/停位/踢泡泡奇偶均有断言）；其中包含多房间隔离、快照/结算受众、练习 1v1 组合、对战倒计时取消/锁定/重赛、换桌即离座与空房间回收、常驻对战房预创建/复用/重置、临时房主转移、房名归一化/可见字符下限/不可见字符拒绝/输入截断与注入文本过滤、密码座位/观战/限流/快速对战跳过、观战者驱逐通知、浏览期间不自动重建练习房间、重复离座幂等、观战只读且永不补位、离座/掉线/无操作判负、多桌上限与换桌、战绩规则、N 人房间配置、房间故障隔离、选角与颜色锁定、按角色记忆颜色、重复颜色/观战选色、输入映射（键盘/方向键/手柄/触屏摇杆）、带序号输入的缓冲与 ack、有序放置的移动前落点/owner+seq 确认/旧 Action 回退、本地移动与泡泡预测、未确认命令回放、炸弹通行证/滑箱预测、高 RTT 下影子离开炸弹格即收回 pass（与 `Game:updateBombPass` 同步，回头不再穿过自己的炸弹行）、延迟+抖动下的网络对账收敛、服务器 Game 与客户端 Prediction 逐帧对拍、快照二进制压缩的编解码往返与损坏帧拒绝、gridVer 地图版本在乱序快照与 ack 回退下的单调应用、档案锁与 fencing、响应丢失/回调重跑故障注入、免费/购买库存、自动携带与上限、练习零携带零消耗、库存摘要、按实际使用结算与免费优先、地图拾取不超额、离座/重置/关服幂等结算、商店入口先离房与房间无关商店快照、购买收据幂等与持久化、有界购买历史与重复回调刷新、断线直存、释放竞争二次落盘、加载中提示与超时重试，以及结算/离场/心跳/关服保存测试。部分测试覆盖了 `client_test` 中的密码/设置/通知/商店进店离房/“我的道具”/购买接线、输入序号发送节奏、有序 `place` 的发送与旧服务器回退、预测泡泡的渲染/音效去重和本地渲染位置，以及聊天默认隐藏、按钮切换、进入对局自动收起和扁平/立体模式切换接线。
+ - 房间故障隔离：`MatchService.step` 对每个房间单独 `pcall`；练习房抛异常时关闭并把成员安置到新房间，常驻对战房则原地回收重置（保留房位）并把成员安置到练习房，其他房间不受影响。同一玩家 30 秒内最多被重新安置 3 次，超过后停止自动重建并记录日志（重新同步或重进服务器会恢复）。客户端画布/渲染/HUD/输入/音频已接线。
+ - 选角锁定的灰化效果（遮罩 + 压暗头像）和手柄交还逻辑只能在 Studio / 真手柄上目视确认。
+ - 角色颜色的六色块布局、按角色恢复、同色头顶名字可辨，以及改色后自动保存/重进恢复，需在 Studio 和手机布局上目视确认。
+diff --git a/detail.md b/detail.md
+index d5fcecc..7360501 100644
+--- a/detail.md
++++ b/detail.md
+@@ -76,6 +76,7 @@
+ - 界面与聊天：桌面设计画布仍为 980×600，但 `UIScale` 上限从 1.15 提高到 1.6，1080p 下棋盘约为 960×832，手机布局不变。默认通过 `TextChatService.ChatWindowConfiguration.Enabled` 和 `ChatInputBarConfiguration.Enabled` 关闭原生聊天窗口与输入栏；右上角“聊天”按钮切换显示，进入对局时自动收起，关闭时不会遮挡棋盘。聊天消息仍由 TextChatService 接收，这是纯客户端改动，不涉及服务端协议或存档。视觉上默认开启轻量扁平化：静态箱子严格占一格，炮台/墙降为约 1.3 格高，中央桅杆缩小到 4×4.8 格，角色和道具取消额外下沉并贴近格子中心；右上角“扁平/立体”按钮可在当前会话内切换回原伪 3D 外观，碰撞和存档不变。
+ - 触屏摇杆已实现：手机对局左下角为单个四向虚拟摇杆（底盘 106px、摇杆头 40px），按主轴映射到上/下/左/右，不做斜向。摇杆为相对式：原点是手指落下的位置，落下不触发移动；推过 5px 起步、回到 2.5px 内才停（滞回）；手指离原点超过 6px 时原点跟随手指，因此冲出底盘后回拉约 4px 停下、约 11px 反向；换轴需另一轴超过当前轴 1.15 倍（转弯约需拇指横切 7px）。实体手柄摇杆独立调参，见下一条。摇杆头显示相对原点的推动量，只跟随第一根手指，泡泡和道具按钮仍在右下角，可与摇杆同时操作；四方向规则不变。headless 测试覆盖落点静默、起步/释放滞回、轴向滞回、边缘反向、越过边缘持续移动、GUI 断触不停止、松手/失焦/禁用/隐藏复位、第二触摸忽略；真实手机触感仍需实机验证。
+ - 转角辅助窗口：`ASSIST_RANGE` 12→18px（须小于格子半宽 20）。满速 240px/s 下转弯窗口由约 104ms 增至约 155ms。`tests/turn_assist_test.luau` 用真实 `Movement` 在十字路口量窗口宽度。
++- 触屏点按脉冲（`InputTouch` + `Input.sample()`）：快速点按（接触 ≤0.20s、从未推过 `TOUCH_ENGAGE`、落点离底盘中心 ≥14px）按落点方位（主轴）发 `TOUCH_TAP_PULSE_TICKS = 3` 条命令的方向脉冲。动机：满速下一格仅约 167ms，松手吸附又以越过格心 4px 为提交点，100–250ms 的“轻按”会在 1 格和 2 格之间摇摆（实测 33–183ms→1 格、200ms 起→2 格）；脉冲固定 3 tick，在 120–240px/s 下都恰好一格（`tests/tap_step_test.luau` 对拍）。脉冲在抬指时才发出，所以点按延迟 = 接触时长。hub 新增 `ctx.pulseSource` 与 `Input.sample()`：`Main.sendCommand` 每发一条命令调用一次 `sample()` 返回方向并给脉冲计数过期，按“命令数”而不是计时器过期，卡帧也不会丢点按；`getDirs()` 仍无副作用。点中间、太久、拖过（哪怕很快）的触摸都不算点按；新触摸、禁用、隐藏控件会取消未完成的脉冲。真机手感待验证。
+ - 手柄摇杆（`InputGamepad`）：起步 40%、释放 28%（滞回，噪声在两者之间不会翻转方向）；换轴需另一轴超过当前轴 1.15 倍；松手回弹保护——摇杆最后一次朝某方向后 0.10s 内，反方向需推到 70% 才算有意反向（松手时摇杆会回弹冲过中心，旧的单一 35% 阈值会把这个过冲读成反向，再被松手吸附放大成一整格）。十字键是数字量，与键盘一致，不经过这些阈值。常量见 `InputGamepad.luau` 的 `STICK_ENGAGE/RELEASE/AXIS_BIAS/REVERSE_GUARD/REVERSE_ENGAGE`；`Gamepad._setClock` 仅供测试注入时钟。真机手感待验证；macOS 上 Roblox 不支持手柄，需映射成按键时走键盘路径，不经过本摇杆逻辑。
+ - 提前转弯缓冲与松手吸附格心已实现：`Movement.step` 维护 `lastMoveDir`（最后成功移动/最终转弯的方向）。想转的新方向被挡时沿 `lastMoveDir` 继续滑行（纯惯性、每 tick 一整步、绝不回退），进入辅助窗口后自动完成转弯——提前按方向不再停住；贴墙按住被挡方向时，辅助中逆着动量的回拽会被撤销并落到缓冲分支，避免 ±一个步长的振荡。松手时沿最后移动轴吸附格心：偏离后方格心超过 `SNAP_COMMIT_PX`（= 满速 240px/s 一个 tick 的位移，60Hz 下 4px）补完到前方格心（点按的墙钟语义与 30Hz 时代完全一致：≤33ms 取消、≥67ms 精确走一格），否则退回后方格心，静止位置离散到格心。缓冲滑行中按住方向顶住炸弹/箱子仍触发踢/推（`buffered` 与 `blocked` 同样进入 kick/push），两个方向都不通才停住。`lastMoveDir` 经快照 `dir` 字段下发（`SnapshotCodec` 版本 2→3，每玩家 +1 字节，1v1 均帧约 +2 字节），`Prediction` 在重放未确认命令前按快照重新种子，逐 tick 与服务端一致；旧服务器不带该字段时客户端自动停用两个行为。`tests/turn_buffer_test.luau`（18 项：提前/极早/晚按、防振荡、顶墙停止、Game 级踢泡泡奇偶、全程可行走）与 `tests/release_snap_test.luau`（20 项：整格补完、阈值抵消、分数速度精确落点、纵轴、新输入接管、反转、对齐释放无动作）覆盖；`prediction_differential_test` 的含松手/撞墙逐帧对拍在 0.1px 量化内保持一致。当前 2349 项测试全部通过（60Hz 化后快照逐 tick 对拍带来 60 项新覆盖）；实机手感仍需验证。
+ - 客户端预测、序号输入与有序放泡泡已实现：`Input` 改为 60Hz（每 tick 一条）的 `{ seq, roundId, dirs, place? }`；服务端每名玩家维护有界队列（上限 12），每个模拟 tick 最多应用 1 条，缓冲 4 个 tick（≈66ms，正常延迟 2–4 tick），并通过快照 `ack` 回传最后应用的序号。客户端新增 `Prediction`，与服务器共用 `Movement` 模块本地预演自己的移动，收到快照后从权威亚像素位置 `fx/fy` 出发、只回放 `seq > ack` 的命令；小误差约 0.08 秒平滑收敛，超过 24px 直接贴合。热身、死亡、被困、观战、缺少 `ack` 或旧服务器不发送 ack 时退回快照插值。快照新增玩家 `fx/fy/ack/speed`、泡泡 `pass` 名单和有序泡泡 `seq`；grid、RoundState 和其他受众规则不变。放泡泡已进入有序命令：`place = true` 与 `seq` 绑定，服务器在该命令被应用的 tick、移动之前放泡泡，和客户端预测使用同一个移动前格子，不信任客户端上报的格子；客户端立即显示预测泡泡并只播放一次音效，快照按 `owner + seq` 确认后合并，`ack >= seq` 且无匹配时撤销，另有 3 秒 TTL/16 条兜底。预测泡泡按 seq 在回放中注入，不会提前挡住服务器已执行的移动；`RoundState.placeSequenced` 用于能力探测，旧服务器回退到即时 `Action("place")`。已知边界：`use`（针/遥控）仍是即时 `Action`，遥控已在外的竞态可能让客户端多响一次本地音效、再由 ack 撤销；踢、推、爆炸、伤害和拾取仍以服务器为准；客户端预测器按服务器的同一规则在影子离开炸弹格时收回炸弹 pass（含快照投影里的服务器炸弹），高 RTT 折返不再穿过自己的炸弹行。快照已在收发处做无状态二进制压缩（`SnapshotCodec`，1v1 平均约 134–142 字节/帧、约为原表的 18%，pack/unpack 往返、Room 发帧与逐 tick 对拍有测试覆盖，grid 段随行携带 `gridVer`）；不可靠通道未切，字段级增量未做。headless 覆盖 `input_buffer_test`、`place_command_test`、`prediction_differential_test`、`prediction_network_test` 和 `prediction_test` 的缓冲/ack/有序放置/逐帧对拍/延迟抖动收敛/校正/回放/泡泡确认与拒绝；弱网和双客户端实机表现仍待验证。
+diff --git a/src/client/Input.luau b/src/client/Input.luau
+index 0a0d97e..1362074 100644
+--- a/src/client/Input.luau
++++ b/src/client/Input.luau
+@@ -30,6 +30,16 @@ local function setSource(source: string, direction: string?)
+     end
+ end
+ 
++-- A pulse is a source that lasts a fixed number of input samples instead of
++-- until someone clears it. It is aged by Input.sample(), which the client calls
++-- exactly once per command it sends, so a pulse always reaches the server in
++-- `ticks` consecutive commands however the frames are paced. A timer could expire
++-- between two samples and drop the tap entirely.
++local function pulseSource(source: string, direction: string, ticks: number)
++    sequence += 1
++    sources[source] = { direction = direction, order = sequence, ticksLeft = math.max(1, math.floor(ticks)) }
++end
++
+ local function getSource(source: string): string?
+     local entry = sources[source]
+     return entry and entry.direction or nil
+@@ -59,11 +69,28 @@ function Input.getDirs(): { string }
+     return dirs
+ end
+ 
++-- The directions for the command being built, then one tick of ageing for
++-- pulses. Only the per-command sampler calls this; everything else peeks with
++-- getDirs() so reading never changes state.
++function Input.sample(): { string }
++    local dirs = Input.getDirs()
++    for name, entry in pairs(sources) do
++        if entry.ticksLeft then
++            entry.ticksLeft -= 1
++            if entry.ticksLeft <= 0 then
++                sources[name] = nil
++            end
++        end
++    end
++    return dirs
++end
++
+ ---------------------------------------------------------------- 初始化
+ 
+ function Input.init(gui: ScreenGui)
+     local ctx = {
+         setSource = setSource,
++        pulseSource = pulseSource,
+         getSource = getSource,
+         placePressed = Input.placePressed,
+         usePressed = Input.usePressed,
+diff --git a/src/client/InputTouch.luau b/src/client/InputTouch.luau
+index 47152bf..9e0b9b6 100644
+--- a/src/client/InputTouch.luau
++++ b/src/client/InputTouch.luau
+@@ -23,6 +23,12 @@ local joystickTravel = 54
+ -- Only the picture of the base stays put.
+ local joystickAnchorX = nil
+ local joystickAnchorY = nil
++-- Tap detection: when and where the thumb landed, and whether this touch ever
++-- pushed far enough to start moving.
++local joystickDownClock = 0
++local joystickDownX = 0
++local joystickDownY = 0
++local joystickEngaged = false
+ 
+ -- The touch joystick owns one source. Keeping it separate from keyboard and
+ -- gamepad sources means releasing it never clears a direction still held on
+@@ -48,6 +54,26 @@ local TOUCH_RELEASE = 2.5
+ local TOUCH_LEASH = 6
+ local TOUCH_AXIS_BIAS = 1.15
+ 
++-- Tap = one step. Walking is quantised to whole cells by the release glide in
++-- Movement, and at full speed a cell is only ~167 ms of travel, so a thumb that
++-- rests on the stick for "a light press" (100-250 ms) lands on one cell or two
++-- depending on a few milliseconds. A quick touch that never pushed past
++-- TOUCH_ENGAGE is therefore not a drag at all: it is a tap on one side of the
++-- base, like a D-pad button, and sends a fixed pulse that is always one cell.
++--   TOUCH_TAP_MAX_SECONDS  longest contact that still counts as a tap.
++--   TOUCH_TAP_MIN_OFFSET   the landing must be this far from the base centre
++--                          (the base radius is 53px) to pick a side; a tap on
++--                          the middle does nothing, as before.
++--   TOUCH_TAP_PULSE_TICKS  commands the direction is held for. 3 ticks (50 ms
++--                          at 60Hz) is past the glide's commit distance at every
++--                          speed and still far short of a second cell.
++local TOUCH_TAP_MAX_SECONDS = 0.20
++local TOUCH_TAP_MIN_OFFSET = 14
++local TOUCH_TAP_PULSE_TICKS = 3
++
++-- Injectable so tests can fix the contact time (seconds).
++local clock = os.clock
++
+ local function setTouchSource(direction: string?)
+     if ctx then
+         ctx.setSource(TOUCH_STICK_SOURCE, direction)
+@@ -59,6 +85,7 @@ local function resetJoystick()
+     joystickDirection = nil
+     joystickAnchorX = nil
+     joystickAnchorY = nil
++    joystickEngaged = false
+     setTouchSource(nil)
+     if joystickKnob then
+         joystickKnob.Position = UDim2.new(0.5, 0, 0.5, 0)
+@@ -122,10 +149,37 @@ local function updateJoystick(position: Vector3)
+     local direction = touchDirection(rx, ry, joystickDirection)
+     if direction ~= joystickDirection then
+         joystickDirection = direction
++        if direction then
++            joystickEngaged = true
++        end
+         setTouchSource(direction)
+     end
+ end
+ 
++-- Which side of the base a finished touch tapped, or nil if it was not a tap.
++-- Called before the joystick state is reset.
++local function tapDirection(): string?
++    if joystickEngaged or not joystickBase then
++        return nil
++    end
++    if clock() - joystickDownClock > TOUCH_TAP_MAX_SECONDS then
++        return nil
++    end
++
++    local centerX = joystickBase.AbsolutePosition.X + joystickBase.AbsoluteSize.X / 2
++    local centerY = joystickBase.AbsolutePosition.Y + joystickBase.AbsoluteSize.Y / 2
++    local ox = joystickDownX - centerX
++    local oy = joystickDownY - centerY
++    if ox * ox + oy * oy < TOUCH_TAP_MIN_OFFSET * TOUCH_TAP_MIN_OFFSET then
++        return nil
++    end
++
++    if math.abs(ox) >= math.abs(oy) then
++        return if ox >= 0 then "right" else "left"
++    end
++    return if oy > 0 then "down" else "up"
++end
++
+ ---------------------------------------------------------------- 摇杆 UI
+ 
+ local function makeButton(parent: Instance, text: string, size: number, position: UDim2): TextButton
+@@ -245,6 +299,10 @@ local function createTouchControls(gui: ScreenGui)
+         if input.UserInputType == Enum.UserInputType.Touch
+             or input.UserInputType == Enum.UserInputType.MouseButton1 then
+             joystickTouch = input
++            joystickDownClock = clock()
++            joystickDownX = input.Position.X
++            joystickDownY = input.Position.Y
++            joystickEngaged = false
+             updateJoystick(input.Position)
+         end
+     end)
+@@ -277,7 +335,11 @@ function Touch.init(context, gui)
+ 
+     UserInputService.InputEnded:Connect(function(input)
+         if input == joystickTouch then
++            local tap = tapDirection()
+             resetJoystick()
++            if tap then
++                ctx.pulseSource(TOUCH_STICK_SOURCE, tap, TOUCH_TAP_PULSE_TICKS)
++            end
+         end
+     end)
+ 
+@@ -316,4 +378,9 @@ function Touch.reset()
+     resetJoystick()
+ end
+ 
++-- Test hook: replace the clock used to time a tap (seconds).
++function Touch._setClock(fn: () -> number)
++    clock = fn
++end
++
+ return Touch
+diff --git a/src/client/Main.client.luau b/src/client/Main.client.luau
+index 3ca53c6..a91c7dd 100644
+--- a/src/client/Main.client.luau
++++ b/src/client/Main.client.luau
+@@ -594,7 +594,7 @@ local MAX_INPUT_CATCHUP = 6
+ -- same timeline as the server buffer.
+ local function sendCommand(now: number)
+     inputSeq += 1
+-    local dirs = Input.getDirs()
++    local dirs = Input.sample()
+     local place = pendingPlace and currentState.placeSequenced == true
+     pendingPlace = false
+     local payload = {
+diff --git a/tests/client/Stubs.luau b/tests/client/Stubs.luau
+index 5a9a975..ec13f89 100644
+--- a/tests/client/Stubs.luau
++++ b/tests/client/Stubs.luau
+@@ -115,6 +115,9 @@ Stubs.Input = {
+     getDirs = function()
+         return Env.dirs or {}
+     end,
++    sample = function()
++        return Env.dirs or {}
++    end,
+     placePressed = signal("placePressed"),
+     usePressed = signal("usePressed"),
+ }
+diff --git a/tests/client/input_touch_test.luau b/tests/client/input_touch_test.luau
+index 34ec04f..f930db8 100644
+--- a/tests/client/input_touch_test.luau
++++ b/tests/client/input_touch_test.luau
+@@ -34,6 +34,13 @@ check("touch controls start hidden", controls.Visible == false)
+ Input.setControlsVisible(true)
+ check("touch controls can be shown", controls.Visible == true)
+ 
++-- Tap timing is measured with an injectable clock so contact times are exact.
++local TouchModule = require("./InputTouch")
++local now = 0
++TouchModule._setClock(function()
++    return now
++end)
++
+ -- The base is anchored bottom-left at (24, H-24); this is what Roblox would
+ -- report through AbsolutePosition/AbsoluteSize while the joystick is visible.
+ joystick.AbsolutePosition = Vector2.new(24, 400)
+@@ -153,6 +160,121 @@ local again = touchAt(centerX + 30, centerY)
+ begin(again)
+ check("the next touch lands silent too", dirs() == "", dirs())
+ release(again)
++check("...and lifting it at once is a tap, which pulses right", dirs() == "right", dirs())
++for _ = 1, 5 do
++    Input.sample()
++end
++check("the pulse has run out", dirs() == "", dirs())
++
++---------------------------------------------------------------- 点按 = 一步
++-- A quick touch that never pushed past the engage threshold is a tap on one
++-- side of the base: it sends a fixed 3-command pulse, however long the finger
++-- actually stayed down. Taps near the middle, slow touches and real drags are not.
++local function sampled(): string
++    return table.concat(Input.sample(), ",")
++end
++local function drain()
++    for _ = 1, 5 do
++        Input.sample()
++    end
++end
++local function tap(dx: number, dy: number, seconds: number?)
++    local t = touchAt(centerX + dx, centerY + dy)
++    begin(t)
++    now += seconds or 0.08
++    release(t)
++    return t
++end
++
++tap(30, 0)
++check("a tap on the right side pulses right", dirs() == "right", dirs())
++local s1, s2, s3, s4 = sampled(), sampled(), sampled(), sampled()
++check("the pulse is in exactly three commands", s1 == "right" and s2 == "right" and s3 == "right" and s4 == "", table.concat({ s1, s2, s3, s4 }, "|"))
++check("and then it is gone", dirs() == "", dirs())
++
++tap(-30, 0)
++for _ = 1, 6 do
++    dirs()
++end
++check("peeking with getDirs never ages the pulse", dirs() == "left", dirs())
++check("it still lasts three commands", sampled() == "left" and sampled() == "left" and sampled() == "left" and sampled() == "")
++
++tap(0, -30)
++check("a tap above the middle pulses up", dirs() == "up", dirs())
++drain()
++tap(0, 30)
++check("a tap below the middle pulses down", dirs() == "down", dirs())
++drain()
++tap(30, 10)
++check("a tap picks the dominant axis (right)", dirs() == "right", dirs())
++drain()
++tap(10, -30)
++check("a tap picks the dominant axis (up)", dirs() == "up", dirs())
++drain()
++
++tap(8, 8)
++check("a tap on the middle does nothing", dirs() == "", dirs())
++tap(0, 0)
++check("a tap dead centre does nothing", dirs() == "", dirs())
++
++tap(30, 0, 0.19)
++check("a 190 ms tap still counts", dirs() == "right", dirs())
++drain()
++tap(30, 0, 0.21)
++check("a 210 ms touch is too slow to be a tap", dirs() == "", dirs())
++tap(30, 0, 0.60)
++check("a long press that never moved is not a tap either", dirs() == "", dirs())
++
++-- A drag that engaged is steering, not a tap, even if it was quick.
++do
++    local t = touchAt(centerX, centerY)
++    begin(t)
++    drag(t, centerX + 8, centerY)
++    check("the quick drag steers right while down", dirs() == "right", dirs())
++    now += 0.05
++    release(t)
++    check("lifting a quick drag leaves no pulse behind", dirs() == "", dirs())
++    check("and nothing is left to sample", sampled() == "")
++end
++
++-- The case that matters: land on the right side of the base, flick left, lift.
++-- The landing side must not turn into a stray "right" pulse after the flick.
++do
++    local t = touchAt(centerX + 30, centerY)
++    begin(t)
++    drag(t, centerX + 22, centerY)
++    check("a flick left from the right side steers left", dirs() == "left", dirs())
++    now += 0.06
++    release(t)
++    check("lifting it leaves no opposite pulse", dirs() == "", dirs())
++    check("and nothing is left to sample after the flick", sampled() == "")
++end
++
++-- A pulse is replaced by the next touch and cancelled by hand-overs.
++tap(30, 0)
++tap(-30, 0)
++check("a second tap replaces the first pulse", dirs() == "left", dirs())
++drain()
++
++tap(30, 0)
++do
++    local t = touchAt(centerX, centerY)
++    begin(t)
++    drag(t, centerX - 20, centerY)
++    check("a new drag takes over a running pulse", dirs() == "left", dirs())
++    release(t)
++    drain()
++end
++
++tap(30, 0)
++Input.setEnabled(false)
++check("disabling input cancels a pending pulse", dirs() == "", dirs())
++Input.setEnabled(true)
++tap(30, 0)
++Input.setControlsVisible(false)
++check("hiding the controls cancels a pending pulse", dirs() == "", dirs())
++Input.setControlsVisible(true)
++check("nothing left over afterwards", sampled() == "")
+ 
+ -- The touch and physical gamepad dead zones are intentionally different. A
+ -- 20% gamepad tilt is inside its 40% engage threshold, a separate dead zone from touch.
+diff --git a/tests/tap_step_test.luau b/tests/tap_step_test.luau
+new file mode 100644
+index 0000000..28ec8f9
+--- /dev/null
++++ b/tests/tap_step_test.luau
+@@ -0,0 +1,64 @@
++-- Why the touch tap pulse is exactly 3 commands: through the real Movement it is
++-- always one cell at every speed, while a plain hold of the same stick walks one
++-- or two cells depending on a few milliseconds of finger contact.
++local TestLib = require("./testlib")
++local check = TestLib.check
++
++local Constants = require("./Constants")
++local Movement = require("./Movement")
++
++local T, COLS, ROWS = Constants.TILE, Constants.COLS, Constants.ROWS
++
++local grid = {}
++for ty = 0, ROWS - 1 do
++    grid[ty] = {}
++    for tx = 0, COLS - 1 do
++        grid[ty][tx] = 1
++    end
++end
++for tx = 1, COLS - 2 do
++    grid[5][tx] = 0
++end
++local world = { grid = grid, bombsByPos = {}, crateSlides = {} }
++local START = 2 * T + T / 2
++
++-- Hold `right` for `ticks` commands, then nothing; return cells walked.
++local function hold(ticks: number, speed: number): number
++    local p = { id = 1, x = START, y = 5 * T + T / 2, speed = speed, dirs = { "right" } }
++    for _ = 1, ticks do
++        Movement.step(world, p)
++    end
++    p.dirs = {}
++    for _ = 1, 60 do
++        Movement.step(world, p)
++    end
++    return (p.x - START) / T
++end
++
++-- Must match TOUCH_TAP_PULSE_TICKS in InputTouch (input_touch_test pins that the
++-- pulse really lasts this many commands).
++local PULSE_TICKS = 3
++
++for _, speed in ipairs({ 120, 144, 192, 240 }) do
++    check(string.format("speed %d: a tap pulse is exactly one cell", speed), hold(PULSE_TICKS, speed) == 1, hold(PULSE_TICKS, speed))
++end
++
++-- The thing the pulse replaces: at full speed the same light press is one cell or
++-- two depending on contact time (one cell is ~167 ms of travel).
++check("full speed: a 150 ms hold is one cell", hold(9, 240) == 1, hold(9, 240))
++check("full speed: a 230 ms hold of the same stick is two cells", hold(14, 240) == 2, hold(14, 240))
++
++-- The glide must land on a centre so the next turn is aligned.
++do
++    local p = { id = 1, x = START, y = 5 * T + T / 2, speed = 240, dirs = { "right" } }
++    for _ = 1, PULSE_TICKS do
++        Movement.step(world, p)
++    end
++    p.dirs = {}
++    for _ = 1, 60 do
++        Movement.step(world, p)
++    end
++    check("the pulse ends exactly on a cell centre", (p.x - T / 2) % T == 0, p.x)
++end
++
++TestLib.finish()

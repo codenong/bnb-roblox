@@ -594,7 +594,7 @@ local MAX_INPUT_CATCHUP = 6
 -- same timeline as the server buffer.
 local function sendCommand(now: number)
     inputSeq += 1
-    local dirs = Input.getDirs()
+    local dirs = Input.sample()
     local place = pendingPlace and currentState.placeSequenced == true
     pendingPlace = false
     local payload = {

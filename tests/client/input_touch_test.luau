@@ -34,6 +34,13 @@ check("touch controls start hidden", controls.Visible == false)
 Input.setControlsVisible(true)
 check("touch controls can be shown", controls.Visible == true)
 
+-- Tap timing is measured with an injectable clock so contact times are exact.
+local TouchModule = require("./InputTouch")
+local now = 0
+TouchModule._setClock(function()
+    return now
+end)
+
 -- The base is anchored bottom-left at (24, H-24); this is what Roblox would
 -- report through AbsolutePosition/AbsoluteSize while the joystick is visible.
 joystick.AbsolutePosition = Vector2.new(24, 400)
@@ -153,6 +160,121 @@ local again = touchAt(centerX + 30, centerY)
 begin(again)
 check("the next touch lands silent too", dirs() == "", dirs())
 release(again)
+check("...and lifting it at once is a tap, which pulses right", dirs() == "right", dirs())
+for _ = 1, 5 do
+    Input.sample()
+end
+check("the pulse has run out", dirs() == "", dirs())
+
+---------------------------------------------------------------- 点按 = 一步
+-- A quick touch that never pushed past the engage threshold is a tap on one
+-- side of the base: it sends a fixed 3-command pulse, however long the finger
+-- actually stayed down. Taps near the middle, slow touches and real drags are not.
+local function sampled(): string
+    return table.concat(Input.sample(), ",")
+end
+local function drain()
+    for _ = 1, 5 do
+        Input.sample()
+    end
+end
+local function tap(dx: number, dy: number, seconds: number?)
+    local t = touchAt(centerX + dx, centerY + dy)
+    begin(t)
+    now += seconds or 0.08
+    release(t)
+    return t
+end
+
+tap(30, 0)
+check("a tap on the right side pulses right", dirs() == "right", dirs())
+local s1, s2, s3, s4 = sampled(), sampled(), sampled(), sampled()
+check("the pulse is in exactly three commands", s1 == "right" and s2 == "right" and s3 == "right" and s4 == "", table.concat({ s1, s2, s3, s4 }, "|"))
+check("and then it is gone", dirs() == "", dirs())
+
+tap(-30, 0)
+for _ = 1, 6 do
+    dirs()
+end
+check("peeking with getDirs never ages the pulse", dirs() == "left", dirs())
+check("it still lasts three commands", sampled() == "left" and sampled() == "left" and sampled() == "left" and sampled() == "")
+
+tap(0, -30)
+check("a tap above the middle pulses up", dirs() == "up", dirs())
+drain()
+tap(0, 30)
+check("a tap below the middle pulses down", dirs() == "down", dirs())
+drain()
+tap(30, 10)
+check("a tap picks the dominant axis (right)", dirs() == "right", dirs())
+drain()
+tap(10, -30)
+check("a tap picks the dominant axis (up)", dirs() == "up", dirs())
+drain()
+
+tap(8, 8)
+check("a tap on the middle does nothing", dirs() == "", dirs())
+tap(0, 0)
+check("a tap dead centre does nothing", dirs() == "", dirs())
+
+tap(30, 0, 0.19)
+check("a 190 ms tap still counts", dirs() == "right", dirs())
+drain()
+tap(30, 0, 0.21)
+check("a 210 ms touch is too slow to be a tap", dirs() == "", dirs())
+tap(30, 0, 0.60)
+check("a long press that never moved is not a tap either", dirs() == "", dirs())
+
+-- A drag that engaged is steering, not a tap, even if it was quick.
+do
+    local t = touchAt(centerX, centerY)
+    begin(t)
+    drag(t, centerX + 8, centerY)
+    check("the quick drag steers right while down", dirs() == "right", dirs())
+    now += 0.05
+    release(t)
+    check("lifting a quick drag leaves no pulse behind", dirs() == "", dirs())
+    check("and nothing is left to sample", sampled() == "")
+end
+
+-- The case that matters: land on the right side of the base, flick left, lift.
+-- The landing side must not turn into a stray "right" pulse after the flick.
+do
+    local t = touchAt(centerX + 30, centerY)
+    begin(t)
+    drag(t, centerX + 22, centerY)
+    check("a flick left from the right side steers left", dirs() == "left", dirs())
+    now += 0.06
+    release(t)
+    check("lifting it leaves no opposite pulse", dirs() == "", dirs())
+    check("and nothing is left to sample after the flick", sampled() == "")
+end
+
+-- A pulse is replaced by the next touch and cancelled by hand-overs.
+tap(30, 0)
+tap(-30, 0)
+check("a second tap replaces the first pulse", dirs() == "left", dirs())
+drain()
+
+tap(30, 0)
+do
+    local t = touchAt(centerX, centerY)
+    begin(t)
+    drag(t, centerX - 20, centerY)
+    check("a new drag takes over a running pulse", dirs() == "left", dirs())
+    release(t)
+    drain()
+end
+
+tap(30, 0)
+Input.setEnabled(false)
+check("disabling input cancels a pending pulse", dirs() == "", dirs())
+Input.setEnabled(true)
+tap(30, 0)
+Input.setControlsVisible(false)
+check("hiding the controls cancels a pending pulse", dirs() == "", dirs())
+Input.setControlsVisible(true)
+check("nothing left over afterwards", sampled() == "")
 
 -- The touch and physical gamepad dead zones are intentionally different. A
 -- 20% gamepad tilt is inside its 40% engage threshold, a separate dead zone from touch.

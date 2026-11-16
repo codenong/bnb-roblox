@@ -115,6 +115,9 @@ Stubs.Input = {
     getDirs = function()
         return Env.dirs or {}
     end,
+    sample = function()
+        return Env.dirs or {}
+    end,
     placePressed = signal("placePressed"),
     usePressed = signal("usePressed"),
 }
