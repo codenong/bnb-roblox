@@ -2,7 +2,10 @@
 -- direction instead of stopping dead; the corner assist completes the turn once
 -- the window is reached, and an assist shift that would only fight the momentum
 -- is undone so the player keeps advancing instead of oscillating around a lane
--- whose way ahead is shut. Also pins kick parity: pressing into a bomb while
+-- whose way ahead is shut -- unless the lane behind really has an open cell in
+-- the pressed direction (F1): then the pull-back is kept and the press that
+-- landed just past the lane centre still turns there. Lane entries align onto
+-- the lane centre (F2). Also pins kick parity: pressing into a bomb while
 -- buffered still kicks it. Uses the real shared Movement (plus one Game-level
 -- kick case) on a small crossroads.
 local TestLib = require("./testlib")
@@ -209,6 +212,57 @@ do
 	end
 	check("the buffered walk never leaves walkable tiles", onFloor)
 	check("the bomb helper key agrees with Grid", Grid.key(7, 5) ~= nil)
+end
+
+-- (F1) A press that lands just past the lane centre walks the player back to
+-- that lane and turns, instead of gliding on to the next lane: the
+-- momentum-fighting pull-back is kept because the column behind really has an
+-- open cell in the pressed direction. The entry also lands exactly on the lane
+-- centre (F2).
+do
+	local p = withMomentum(LANE_X + 10, LANE_Y)
+	p.dirs = { "up" }
+	local turned = false
+	for _ = 1, 20 do
+		Movement.step(world, p)
+		if p.lastMoveDir == "up" then
+			turned = true
+			break
+		end
+	end
+	check("a press just past the lane centre turns back into that lane", turned)
+	-- The crossing snap fires on the tick after the turn, when the body
+	-- actually crosses into the lane's cell band.
+	for _ = 1, 4 do
+		Movement.step(world, p)
+	end
+	check("the turn-back lands exactly on the lane centre", p.x == LANE_X, tostring(p.x))
+	check("the turn-back actually moved up", p.y < LANE_Y, tostring(p.y))
+end
+
+-- (F1) The same pull-back mirrored: downward momentum, the horizontal corridor
+-- just behind, and the pressed column open -- the pull-back completes and the
+-- crossing snap (F2) settles the lateral coordinate exactly on the centre.
+do
+	local p = walker(LANE_X, LANE_Y + 12)
+	p.dirs = { "down" }
+	Movement.step(world, p)
+	check("momentum points down the lane", p.lastMoveDir == "down", tostring(p.lastMoveDir))
+	p.dirs = { "right" }
+	local turned = false
+	for _ = 1, 20 do
+		Movement.step(world, p)
+		if p.lastMoveDir == "right" then
+			turned = true
+			break
+		end
+	end
+	check("a press just past the crossing turns back onto the corridor", turned)
+	for _ = 1, 4 do
+		Movement.step(world, p)
+	end
+	check("the mirrored turn-back lands exactly on the corridor centre", p.y == LANE_Y,
+		tostring(p.y))
 end
 
 TestLib.finish()

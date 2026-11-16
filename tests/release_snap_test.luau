@@ -172,4 +172,23 @@ do
 		p.x == 2 * T + T / 2, tostring(p.x))
 end
 
+-- (F2) Lane-entry alignment in the open room: a body that spans two rows
+-- across (more than TILE/2 - HALF off the centre) keeps its straight line --
+-- the alignment only acts when the box fits a single cell.
+do
+	local p = walker(3 * T + T / 2, 4 * T + T / 2 + 10)
+	holdTicks(p, "right", 6)
+	check("an open-ground offset wider than the fit window survives crossings",
+		p.y == 4 * T + T / 2 + 10, tostring(p.y))
+end
+
+-- (F2) A small offset within the fit window straightens onto the row centre at
+-- the next column crossing, so legacy drift heals while walking.
+do
+	local p = walker(3 * T + T / 2, 4 * T + T / 2 + 3)
+	holdTicks(p, "right", 6)
+	check("a small open-ground offset straightens onto the row centre",
+		p.y == 4 * T + T / 2, tostring(p.y))
+end
+
 TestLib.finish()

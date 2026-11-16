@@ -153,7 +153,11 @@ end
 -- assist that then drags them back the same way without completing the forward
 -- move would turn the buffer into an 8px oscillation around a lane whose way
 -- ahead is shut. Such shifts are undone and the tick falls through to the
--- buffer, so the player keeps advancing until a real window opens. Shifts
+-- buffer, so the player keeps advancing until a real window opens. The one
+-- exception (F1): when the shift aims at a lane whose cell in the pressed
+-- direction is open -- a real turn just behind the player -- the pull-back is
+-- kept and later ticks finish it, so a press that landed just past a lane
+-- centre still turns there instead of gliding on to the next lane. Shifts
 -- along the momentum axis TOWARD the momentum (the early-press approach) and
 -- perpendicular shifts are untouched.
 local function fightsMomentum(player, shift: number, horizontalShift: boolean): boolean
@@ -166,6 +170,46 @@ local function fightsMomentum(player, shift: number, horizontalShift: boolean): 
         return false -- the shift is perpendicular to the momentum axis
     end
     return (shift > 0) ~= (AXIS_SIGN[lastDir] > 0)
+end
+
+-- (F2) Did this move carry the collision box across a cell boundary along
+-- `dir`? Only that first crossing move decides which lane the player ends up
+-- in, so it is the one moment worth aligning. Edge indices mirror collides():
+-- the leading edge is (pos + HALF - 0.01) in dir's sense, the trailing one is
+-- (pos - HALF).
+local function enteredNewCell(dir: string, xOld: number, yOld: number, xNew: number, yNew: number): boolean
+    if dir == "down" then
+        return math.floor((yNew + HALF - 0.01) / TILE) > math.floor((yOld + HALF - 0.01) / TILE)
+    elseif dir == "up" then
+        return math.floor((yNew - HALF) / TILE) < math.floor((yOld - HALF) / TILE)
+    elseif dir == "right" then
+        return math.floor((xNew + HALF - 0.01) / TILE) > math.floor((xOld + HALF - 0.01) / TILE)
+    else -- left
+        return math.floor((xNew - HALF) / TILE) < math.floor((xOld - HALF) / TILE)
+    end
+end
+
+-- (F2) Lane-entry alignment. The first move along `dir` that crosses a cell
+-- boundary snaps the perpendicular coordinate onto the centre of the cell
+-- being entered, so a turn starts exactly on the lane centre instead of
+-- carrying a 0..(TILE/2 - HALF) px offset for the rest of the lane. Applies
+-- only when the box fits a single cell across (the lane case): in wide-open
+-- ground the box spans two cells and the straight line is kept.
+local function snapAcrossEntry(player, dir: string, xOld: number, yOld: number)
+    if not enteredNewCell(dir, xOld, yOld, player.x, player.y) then
+        return
+    end
+    if dir == "down" or dir == "up" then
+        if math.floor((player.x - HALF) / TILE) ~= math.floor((player.x + HALF - 0.01) / TILE) then
+            return
+        end
+        player.x = math.floor(player.x / TILE) * TILE + TILE / 2
+    else
+        if math.floor((player.y - HALF) / TILE) ~= math.floor((player.y + HALF - 0.01) / TILE) then
+            return
+        end
+        player.y = math.floor(player.y / TILE) * TILE + TILE / 2
+    end
 end
 
 -- Move one simulation tick.
@@ -207,6 +251,7 @@ function Movement.step(world, player): string
         dy = step
     end
 
+    local xOld, yOld = player.x, player.y
     if Movement.tryMove(world, player, dx, dy) then
         -- A press perpendicular to the momentum that only creeps along a wall
         -- face (the very next step in the pressed direction is already solid)
@@ -221,6 +266,9 @@ function Movement.step(world, player): string
             player.x -= dx
             player.y -= dy
         else
+            -- (F2) If this move crossed into a new cell along `dir`, align the
+            -- perpendicular coordinate before the lane position is remembered.
+            snapAcrossEntry(player, dir, xOld, yOld)
             player.lastMoveDir = dir
             clearPush(player)
             return "moved"
@@ -229,8 +277,10 @@ function Movement.step(world, player): string
 
     -- Corner assist: nudge toward the adjacent lane center, then retry. A
     -- shift that fights the turn buffer's momentum and cannot complete the
-    -- forward move is undone (see fightsMomentum) and this tick falls through
-    -- to the buffer instead of reporting "assisted".
+    -- forward move is undone (see fightsMomentum) -- unless it aims at a lane
+    -- whose cell in the pressed direction is open (F1), in which case the
+    -- pull-back is kept so later ticks can finish the turn -- and this tick
+    -- falls through to the buffer instead of reporting "assisted".
     local assisted = false
     if dx ~= 0 then
         local center = math.floor(player.y / TILE) * TILE + TILE / 2
@@ -239,8 +289,14 @@ function Movement.step(world, player): string
             if delta ~= 0 and math.abs(delta) <= ASSIST_RANGE then
                 assisted = true
                 local shift = if math.abs(delta) <= step then delta else Grid.sign(delta) * step
+                -- (F1) Is the cell one step in the pressed direction from the
+                -- lane row this shift aims at open? A momentum-fighting
+                -- pull-back is only kept when it aims at a real turn.
+                local laneOpen = not Movement.solidFor(world,
+                    math.floor(player.x / TILE) + AXIS_SIGN[dir], math.floor(cy / TILE), player)
                 if not Movement.collides(world, player, player.x, player.y + shift) then
                     player.y += shift
+                    local xBefore, yBefore = player.x, player.y
                     if Movement.tryMove(world, player, dx, 0) then
                         if player.lastMoveDir ~= nil and player.lastMoveDir ~= dir
                             and Movement.collides(world, player, player.x + dx, player.y) then
@@ -248,20 +304,22 @@ function Movement.step(world, player): string
                             -- one-step look-ahead as the direct move above, taken
                             -- from the moved position): undo the move, keep the
                             -- momentum, and keep the alignment shift only when it
-                            -- does not fight the momentum -- otherwise the
-                            -- pull-back and the turn buffer would oscillate
-                            -- around the centre behind.
+                            -- does not fight the momentum (or (F1) aims at a real
+                            -- lane) -- otherwise the pull-back and the turn
+                            -- buffer would oscillate around the centre behind.
                             player.x -= dx
-                            if fightsMomentum(player, shift, false) then
+                            if fightsMomentum(player, shift, false) and not laneOpen then
                                 player.y -= shift
                                 assisted = false
                             end
                         else
-                            -- The turn really happened: remember the new axis.
+                            -- The turn really happened: remember the new axis
+                            -- and (F2) align the entry onto the lane centre.
                             player.lastMoveDir = dir
+                            snapAcrossEntry(player, dir, xBefore, yBefore)
                             clearPush(player)
                         end
-                    elseif fightsMomentum(player, shift, false) then
+                    elseif fightsMomentum(player, shift, false) and not laneOpen then
                         player.y -= shift
                         assisted = false
                     end
@@ -276,25 +334,33 @@ function Movement.step(world, player): string
             if delta ~= 0 and math.abs(delta) <= ASSIST_RANGE then
                 assisted = true
                 local shift = if math.abs(delta) <= step then delta else Grid.sign(delta) * step
+                -- (F1) Mirror: the cell one step in the pressed direction from
+                -- the lane column this shift aims at.
+                local laneOpen = not Movement.solidFor(world,
+                    math.floor(cx / TILE), math.floor(player.y / TILE) + AXIS_SIGN[dir], player)
                 if not Movement.collides(world, player, player.x + shift, player.y) then
                     player.x += shift
+                    local xBefore, yBefore = player.x, player.y
                     if Movement.tryMove(world, player, 0, dy) then
                         if player.lastMoveDir ~= nil and player.lastMoveDir ~= dir
                             and Movement.collides(world, player, player.x, player.y + dy) then
                             -- Mirror of the horizontal branch: undo the wall-face
                             -- creep, keep the momentum, keep a shift that does
-                            -- not fight the momentum.
+                            -- not fight the momentum (or (F1) aims at a real
+                            -- lane).
                             player.y -= dy
-                            if fightsMomentum(player, shift, true) then
+                            if fightsMomentum(player, shift, true) and not laneOpen then
                                 player.x -= shift
                                 assisted = false
                             end
                         else
-                            -- The turn really happened: remember the new axis.
+                            -- The turn really happened: remember the new axis
+                            -- and (F2) align the entry onto the lane centre.
                             player.lastMoveDir = dir
+                            snapAcrossEntry(player, dir, xBefore, yBefore)
                             clearPush(player)
                         end
-                    elseif fightsMomentum(player, shift, true) then
+                    elseif fightsMomentum(player, shift, true) and not laneOpen then
                         player.x -= shift
                         assisted = false
                     end

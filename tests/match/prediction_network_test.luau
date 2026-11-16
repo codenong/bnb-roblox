@@ -243,10 +243,16 @@ do
     check("all sent commands were applied", h.converged() == true,
         h.latest and playerEntry(h.latest, record.id) and playerEntry(h.latest, record.id).ack)
     check("no normal-jitter snapshot caused a >24px snap", h.snapped == false)
-    -- A reordered/dropped command costs exactly one command tick of movement
-    -- (144 px/s / 30 Hz = 4.8px) plus the 0.1px snapshot quantization.
-    check("the largest correction stays within one command tick", h.maxDelta <= 5.0,
-        h.maxDelta)
+    -- A reordered/dropped command costs one command tick of movement (2 sim
+    -- ticks at the 144 px/s base = 4.8px). A turn entry can additionally align
+    -- the lateral coordinate onto the lane centre within the same command
+    -- (Movement's lane-entry alignment: at most TILE/2 - HALF = 7px, applied
+    -- deterministically by the same shared code on both sides, so it is legit
+    -- movement, not a network artifact), plus the 0.1px snapshot quantization.
+    local commandStep = 2 * 144 * Constants.DT
+    local laneAlign = Constants.TILE / 2 - Constants.HALF
+    check("the largest correction stays within one command tick plus one lane-entry alignment",
+        h.maxDelta <= commandStep + laneAlign + 0.1, h.maxDelta)
     check("out-of-order snapshots were actually exercised", h.ignoredOldAck > 0,
         h.ignoredOldAck)
 
