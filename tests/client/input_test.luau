@@ -272,14 +272,29 @@ end
 local function fired(event)
     return event.fireCount
 end
+-- A gamepad press the way the engine delivers it: ContextActionService bindings
+-- get the first look, then UserInputService.InputBegan fires with the result as
+-- gameProcessedEvent.
+local function pad(keyName: string, state: Enum.UserInputState): boolean
+    local input = { KeyCode = Enum.KeyCode[keyName], UserInputType = Enum.UserInputType.Gamepad1 }
+    local processed = Env.dispatchKey(input, state)
+    if state == Enum.UserInputState.Begin then
+        Env.fire("InputBegan", input, processed)
+    end
+    return processed
+end
+
 local placeBefore, useBefore = fired(Input.placePressed), fired(Input.usePressed)
 begin("Space")
-begin("ButtonA")
-check("Space and gamepad A place a bubble", fired(Input.placePressed) == placeBefore + 2, fired(Input.placePressed) - placeBefore)
-for _, keyName in ipairs({ "E", "LeftShift", "RightShift", "LeftControl", "RightControl", "ButtonB", "ButtonX" }) do
+check("Space places a bubble", fired(Input.placePressed) == placeBefore + 1, fired(Input.placePressed) - placeBefore)
+check("gamepad R1 places a bubble and is sunk", pad("ButtonR1", Enum.UserInputState.Begin) == true and fired(Input.placePressed) == placeBefore + 2)
+pad("ButtonR1", Enum.UserInputState.End)
+check("releasing R1 does not place again", fired(Input.placePressed) == placeBefore + 2)
+for _, keyName in ipairs({ "E", "LeftShift", "RightShift", "LeftControl", "RightControl" }) do
     begin(keyName)
 end
-check("E / Shift / Ctrl / gamepad B and X use an item", fired(Input.usePressed) == useBefore + 7, fired(Input.usePressed) - useBefore)
+check("E / Shift / Ctrl use an item", fired(Input.usePressed) == useBefore + 5, fired(Input.usePressed) - useBefore)
+check("gamepad R2 uses an item and is sunk", pad("ButtonR2", Enum.UserInputState.Begin) == true and fired(Input.usePressed) == useBefore + 6)
 check("use keys never place a bubble", fired(Input.placePressed) == placeBefore + 2)
 
 ---------------------------------------------------------------- 已被界面处理的按键不触发（聊天框等）
@@ -320,5 +335,29 @@ check("playing: nothing stays selected", gui.SelectedObject == nil)
 Input.setEnabled(false)
 check("not playing: auto-select is back on", gui.AutoSelectGuiEnabled == true)
 check("not playing: GUI navigation is back on", gui.GuiNavigationEnabled == true)
+
+---------------------------------------------------------------- 手柄面键：A/B/X 废弃，对局中屏蔽默认跳跃
+do
+    local placeBefore, useBefore = fired(Input.placePressed), fired(Input.usePressed)
+
+    -- Playing: A is claimed and sunk (the core jump never sees it) and no
+    -- longer places a bubble; B and X stay unclaimed and do nothing.
+    Input.setEnabled(true)
+    check("playing: sinking ButtonA blocks the default jump", pad("ButtonA", Enum.UserInputState.Begin) == true)
+    check("A no longer places a bubble", fired(Input.placePressed) == placeBefore)
+    check("B is unclaimed and does nothing", pad("ButtonB", Enum.UserInputState.Begin) == false and fired(Input.usePressed) == useBefore)
+    check("X is unclaimed and does nothing", pad("ButtonX", Enum.UserInputState.Begin) == false and fired(Input.usePressed) == useBefore)
+
+    -- Character-select screen: A goes back to GUI activation; R1/R2 remain
+    -- claimed (sunk) but the enabled check keeps them from firing.
+    Input.setEnabled(false)
+    check("menus: ButtonA passes through for GUI activation", pad("ButtonA", Enum.UserInputState.Begin) == false)
+    check("menus: R1 is sunk but silent", pad("ButtonR1", Enum.UserInputState.Begin) == true and fired(Input.placePressed) == placeBefore)
+    check("menus: R2 is sunk but silent", pad("ButtonR2", Enum.UserInputState.Begin) == true and fired(Input.usePressed) == useBefore)
+
+    -- Back in a round: the jump block is bound again.
+    Input.setEnabled(true)
+    check("playing again: ButtonA is sunk once more", pad("ButtonA", Enum.UserInputState.Begin) == true)
+end
 
 TestLib.finish()
