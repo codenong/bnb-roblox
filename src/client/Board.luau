@@ -208,7 +208,9 @@ local function buildFloor()
 end
 
 -- Central mast is static; keep it above row 7 obstacles but below row 7 items.
--- Flat mode keeps the base at row 8 but shrinks the art from 5x6 to 4x4.8 tiles.
+-- Flat mode only slims the art (5x6 -> 4.5x6): mast.png's hull band spans the
+-- middle half of the sprite, so any shorter sprite pushes the hull off the
+-- HOUSE rows 4-6 and leaves blocking cells looking like open floor.
 local function buildMast()
     local old = obstacles.mast
     if old then
@@ -219,8 +221,8 @@ local function buildMast()
     local z = 100 + 7 * 100 + 5
     local mast = makeObstacleRoot(5, 2, z)
     mast.Name = "Mast"
-    local mastWidth = if flatMode then 4 * T else 5 * T
-    local mastHeight = if flatMode then 4.8 * T else 6 * T
+    local mastWidth = if flatMode then 4.5 * T else 5 * T
+    local mastHeight = 6 * T
     local mastX = 7.5 * T - mastWidth / 2
     local mastY = 8 * T - mastHeight
     local sheet = Sprites.SHEETS.mast
