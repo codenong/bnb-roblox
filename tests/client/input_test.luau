@@ -150,6 +150,124 @@ stick(0.9, 0.5)
 check("stick picks the dominant axis", dirs() == "right", dirs())
 stick(0, 0)
 
+---------------------------------------------------------------- 手柄摇杆：滞回 / 轴向偏置 / 回弹保护
+-- Tuning in InputGamepad: engage 0.40, release 0.28, axis bias 1.15, reverse
+-- guard 0.10 s (reverse needs 0.70 inside it). The clock is injected so the
+-- time-based guard is deterministic.
+do
+    local Gamepad = require("./InputGamepad")
+    local now = 0
+    Gamepad._setClock(function()
+        return now
+    end)
+    Gamepad.reset()
+    stick(0, 0)
+
+    -- Engage / release hysteresis.
+    stick(0.30, 0)
+    check("below the engage threshold from rest does nothing", dirs() == "", dirs())
+    stick(0.45, 0)
+    check("past the engage threshold starts moving", dirs() == "right", dirs())
+    stick(0.30, 0)
+    check("easing off to 0.30 keeps moving (still above release)", dirs() == "right", dirs())
+    stick(0.25, 0)
+    check("falling below release stops", dirs() == "", dirs())
+    stick(0.30, 0)
+    check("0.30 from rest is silent again (the band re-arms)", dirs() == "", dirs())
+
+    -- Noise around the old single 0.35 threshold used to toggle the direction.
+    stick(0.45, 0)
+    local last, changes = dirs(), 0
+    for _, value in ipairs({ 0.36, 0.44, 0.33, 0.41, 0.31, 0.43, 0.35, 0.40, 0.29 }) do
+        stick(value, 0)
+        if dirs() ~= last then
+            changes += 1
+            last = dirs()
+        end
+    end
+    check("noise between 0.29 and 0.44 never toggles the direction", changes == 0 and last == "right", changes)
+    stick(0, 0)
+
+    -- Axis bias: turning a corner needs the other axis to win by 15%.
+    stick(0.8, 0)
+    check("moving right", dirs() == "right", dirs())
+    stick(0.8, 0.85)
+    check("a slightly stronger vertical does not turn the corner", dirs() == "right", dirs())
+    stick(0.8, 0.95)
+    check("a clearly stronger vertical turns the corner", dirs() == "up", dirs())
+    stick(0.8, 0.85)
+    check("and does not flip back on a small wobble", dirs() == "up", dirs())
+    stick(0.9, 0.2)
+    check("a clearly horizontal stick goes back to right", dirs() == "right", dirs())
+    stick(0, 0)
+
+    -- Spring-back: letting go sweeps through the centre and overshoots.
+    now = 10
+    stick(1, 0)
+    check("held right", dirs() == "right", dirs())
+    now = 10.02
+    stick(0.4, 0)
+    now = 10.04
+    stick(0.1, 0)
+    check("released", dirs() == "", dirs())
+    now = 10.06
+    stick(-0.5, 0)
+    check("spring-back overshoot to -0.5 is ignored", dirs() == "", dirs())
+    now = 10.08
+    stick(-0.65, 0)
+    check("even -0.65 inside the guard is ignored", dirs() == "", dirs())
+    now = 10.10
+    stick(0, 0)
+
+    -- Once the guard has run out the same push is a real reverse.
+    now = 11
+    stick(1, 0)
+    now = 11.02
+    stick(0, 0)
+    now = 11.30
+    stick(-0.5, 0)
+    check("after the guard a -0.5 push reverses", dirs() == "left", dirs())
+    stick(0, 0)
+
+    -- A deliberate, full-strength reverse is not delayed by the guard.
+    now = 12
+    stick(1, 0)
+    now = 12.03
+    stick(-0.9, 0)
+    check("a full-strength reverse goes through immediately", dirs() == "left", dirs())
+    stick(0, 0)
+
+    -- A weak sign flip with no sample in between is also spring-back.
+    now = 13
+    stick(1, 0)
+    now = 13.01
+    stick(-0.3, 0)
+    check("a direct flip to -0.3 stops instead of reversing", dirs() == "", dirs())
+    now = 13.40
+    stick(-0.3, 0)
+    check("-0.3 from rest stays silent", dirs() == "", dirs())
+    stick(0, 0)
+
+    -- Turning a corner is not a reversal: the guard never delays it.
+    now = 14
+    stick(1, 0)
+    now = 14.01
+    stick(0, 0.6)
+    check("a perpendicular turn inside the guard is immediate", dirs() == "up", dirs())
+    stick(0, 0)
+
+    -- A reset closes an open hysteresis band.
+    now = 15
+    stick(1, 0)
+    check("held right before reset", dirs() == "right", dirs())
+    Gamepad.reset()
+    stick(0.30, 0)
+    check("after a reset 0.30 is below engage again", dirs() == "", dirs())
+    stick(0, 0)
+
+    Gamepad._setClock(os.clock)
+end
+
 ---------------------------------------------------------------- 放泡泡 / 用道具
 local function fired(event)
     return event.fireCount

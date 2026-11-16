@@ -155,17 +155,17 @@ check("the next touch lands silent too", dirs() == "", dirs())
 release(again)
 
 -- The touch and physical gamepad dead zones are intentionally different. A
--- 20% gamepad tilt is inside its 35% threshold, a separate dead zone from touch.
+-- 20% gamepad tilt is inside its 40% engage threshold, a separate dead zone from touch.
 local gamepad = {
     UserInputType = Enum.UserInputType.Gamepad1,
     KeyCode = Enum.KeyCode.Thumbstick1,
     Position = Vector3.new(0.2, 0, 0),
 }
 Env.fire("InputChanged", gamepad)
-check("the physical gamepad keeps its 35% dead zone", dirs() == "", dirs())
-gamepad.Position = Vector3.new(0.4, 0, 0)
+check("the physical gamepad keeps its own dead zone", dirs() == "", dirs())
+gamepad.Position = Vector3.new(0.45, 0, 0)
 Env.fire("InputChanged", gamepad)
-check("the physical gamepad still moves past 35%", dirs() == "right", dirs())
+check("the physical gamepad still moves past its engage threshold", dirs() == "right", dirs())
 gamepad.Position = Vector3.new(0, 0, 0)
 Env.fire("InputChanged", gamepad)
 check("centring the gamepad clears its direction", dirs() == "", dirs())

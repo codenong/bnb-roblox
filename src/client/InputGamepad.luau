@@ -16,10 +16,47 @@ local Gamepad = {}
 local ctx = nil
 local enabled = true
 
--- Physical gamepad dead zone. The touch joystick has its own, smaller radial
--- dead zone in InputTouch; do not lower this one just because a thumb needs
--- less travel.
-local STICK_THRESHOLD = 0.35
+-- Analog thumbstick tuning. Only the stick goes through this; D-pad buttons are
+-- digital edges (like keyboard keys) and bypass it. The touch joystick has its
+-- own, separate tuning in InputTouch.
+--
+-- The game is four-way and a held direction is turned into whole cells by the
+-- release glide in Movement, so a stick that chatters around one threshold for
+-- 2+ ticks (33 ms) would walk a full cell. That is why every threshold below
+-- comes in an on/off pair instead of a single dead zone:
+--   STICK_ENGAGE         deflection that starts moving from rest.
+--   STICK_RELEASE        once moving, deflection must fall below this to stop.
+--                        The gap to ENGAGE is the hysteresis: noise around one
+--                        threshold can no longer toggle the direction.
+--   STICK_AXIS_BIAS      the other axis must beat the current one by this factor
+--                        to turn a corner, so a wobbling diagonal does not flip
+--                        between two directions every frame.
+--   STICK_REVERSE_GUARD  seconds after the stick was last held one way during
+--                        which the opposite way needs STICK_REVERSE_ENGAGE. A
+--                        released stick springs back through the centre and
+--                        overshoots to the other side; without this guard that
+--                        overshoot reads as a deliberate reverse.
+local STICK_ENGAGE = 0.40
+local STICK_RELEASE = 0.28
+local STICK_AXIS_BIAS = 1.15
+local STICK_REVERSE_GUARD = 0.10
+local STICK_REVERSE_ENGAGE = 0.70
+
+local OPPOSITE = {
+    left = "right",
+    right = "left",
+    up = "down",
+    down = "up",
+}
+
+-- Injectable so tests can drive the time-based reverse guard deterministically.
+local clock = os.clock
+
+-- Stick state. Cleared on reset and whenever the module is enabled/disabled, so
+-- a stale direction never keeps a hysteresis band open after a hand-over.
+local stickDirection: string? = nil
+local lastStickDirection: string? = nil
+local lastStickTime = 0
 
 local MOVE_BUTTONS = {
     [Enum.KeyCode.DPadUp] = "up",
@@ -37,28 +74,59 @@ local USE_BUTTONS = {
     [Enum.KeyCode.ButtonX] = true,
 }
 
--- x is right-positive and y is up-positive. The game is strictly four-way, so
--- the dominant axis wins; equal diagonals deterministically pick horizontal.
-local function directionFromAxes(x: number, y: number): string?
-    if math.abs(x) >= math.abs(y) then
-        if x > STICK_THRESHOLD then
-            return "right"
-        elseif x < -STICK_THRESHOLD then
-            return "left"
-        end
-    else
-        if y > STICK_THRESHOLD then
-            return "up"
-        elseif y < -STICK_THRESHOLD then
-            return "down"
-        end
-    end
-    return nil
+local function resetStick()
+    stickDirection = nil
+    lastStickDirection = nil
+    lastStickTime = 0
 end
 
-local function stickDirection(position: Vector3): string?
+-- x is right-positive and y is up-positive. The game is strictly four-way, so
+-- the dominant axis wins; from rest, equal diagonals deterministically pick
+-- horizontal. `now` is in seconds.
+local function resolveStick(x: number, y: number, now: number): string?
+    local ax, ay = math.abs(x), math.abs(y)
+    local magnitude = math.max(ax, ay)
+    local direction: string? = nil
+
+    local threshold = if stickDirection then STICK_RELEASE else STICK_ENGAGE
+    if magnitude >= threshold then
+        local horizontal
+        if stickDirection == "left" or stickDirection == "right" then
+            horizontal = not (ay > ax * STICK_AXIS_BIAS)
+        elseif stickDirection == "up" or stickDirection == "down" then
+            horizontal = ax > ay * STICK_AXIS_BIAS
+        else
+            horizontal = ax >= ay
+        end
+
+        if horizontal then
+            direction = if x >= 0 then "right" else "left"
+        else
+            direction = if y >= 0 then "up" else "down"
+        end
+
+        -- A reversal is a new push, not a continuation of the old one, so it
+        -- has to clear the engage threshold; right after letting go it has to
+        -- be a clearly deliberate one (spring-back overshoot is not).
+        if lastStickDirection ~= nil and direction == OPPOSITE[lastStickDirection] then
+            local needed = if now - lastStickTime < STICK_REVERSE_GUARD then STICK_REVERSE_ENGAGE else STICK_ENGAGE
+            if magnitude < needed then
+                direction = nil
+            end
+        end
+    end
+
+    if direction ~= nil then
+        lastStickDirection = direction
+        lastStickTime = now
+    end
+    stickDirection = direction
+    return direction
+end
+
+local function stickDirectionFor(position: Vector3): string?
     -- Roblox reports Thumbstick1 with +Y up, which already matches our axes.
-    return directionFromAxes(position.X, position.Y)
+    return resolveStick(position.X, position.Y, clock())
 end
 
 local function setGuiNavigation(on: boolean)
@@ -108,7 +176,7 @@ function Gamepad.init(context, _gui)
     UserInputService.InputChanged:Connect(function(input)
         if input.KeyCode == Enum.KeyCode.Thumbstick1 then
             if enabled then
-                local direction = stickDirection(input.Position)
+                local direction = stickDirectionFor(input.Position)
                 local previous = ctx.getSource("gamepad_stick")
                 if direction then
                     if not previous or previous ~= direction then
@@ -124,6 +192,7 @@ end
 
 function Gamepad.setEnabled(value: boolean)
     enabled = value
+    resetStick()
     -- While a round is being played the gamepad belongs to the game; on the
     -- character-select screen (input disabled) navigation comes back so a
     -- gamepad can still pick a card.
@@ -135,7 +204,14 @@ function Gamepad.setControlsVisible(_visible: boolean)
 end
 
 function Gamepad.reset()
-    -- Sources are cleared centrally by the hub; nothing device-local here.
+    -- Sources are cleared centrally by the hub; only the stick's own hysteresis
+    -- state lives here.
+    resetStick()
+end
+
+-- Test hook: replace the clock used by the reverse guard (seconds).
+function Gamepad._setClock(fn: () -> number)
+    clock = fn
 end
 
 return Gamepad
