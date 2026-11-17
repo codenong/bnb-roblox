@@ -223,26 +223,55 @@ end
 
 ---------------------------------------------------------------- 四方向按键
 
--- Press-and-hold buttons in the joystick's spot. Each button owns one source
--- ("touch_dpad_<direction>"), so held buttons keep their press order and the
--- hub treats the newest press as the current direction -- the same contract
--- as held keyboard keys. The per-button finger count keeps the direction
--- alive while two fingers rest on one button.
-local DPAD_IDLE_TRANSPARENCY = 0.72
-local DPAD_PRESSED_TRANSPARENCY = 0.5
-local directionPadButtons = {} -- direction -> TextButton, for the reset paths
+-- Press-and-hold ring sectors styled after the reference art: a near-black
+-- ring split into four pie sectors around a translucent dead hole. Each
+-- sector owns one source ("touch_dpad_<direction>"), so held sectors keep
+-- their press order and the hub treats the newest press as the current
+-- direction -- the same contract as held keyboard keys. The per-sector
+-- finger count (shared across all its spokes) keeps the direction alive
+-- while two fingers rest anywhere on the sector. Pressing floods the whole
+-- sector blue and lights its arrow; releasing restores the dark ring.
+local DPAD_IDLE_COLOR = Color3.fromRGB(15, 16, 22)
+local DPAD_IDLE_FILL = 0
+local DPAD_PRESSED_COLOR = Color3.fromRGB(45, 110, 255)
+local DPAD_PRESSED_FILL = 0
+local DPAD_IDLE_TEXT_TRANSPARENCY = 0.3
+local DPAD_PRESSED_TEXT_TRANSPARENCY = 0
+local DPAD_SPOKE_ZINDEX = 50002
+local DPAD_ACTIVE_ZINDEX = 50006
+local directionPadButtons = {} -- direction -> { spokes = {...}, label }, for the reset paths
+local sectorTouches = {} -- direction -> { count }, active fingers across the sector
+
+local function applySectorVisual(direction: string, pressed: boolean)
+    local sector = directionPadButtons[direction]
+    if not sector then
+        return
+    end
+    for _, spoke in ipairs(sector.spokes) do
+        spoke.BackgroundColor3 = pressed and DPAD_PRESSED_COLOR or DPAD_IDLE_COLOR
+        spoke.BackgroundTransparency = pressed and DPAD_PRESSED_FILL or DPAD_IDLE_FILL
+        -- Raise the lit sector above its neighbours so its spoke edges win
+        -- the diagonal overlaps and the slice keeps its radial boundary.
+        spoke.ZIndex = pressed and DPAD_ACTIVE_ZINDEX or DPAD_SPOKE_ZINDEX
+    end
+    sector.label.TextTransparency = pressed and DPAD_PRESSED_TEXT_TRANSPARENCY or DPAD_IDLE_TEXT_TRANSPARENCY
+end
 
 local function resetDirectionPad()
-    for direction, button in pairs(directionPadButtons) do
-        button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
+    for direction in pairs(directionPadButtons) do
+        applySectorVisual(direction, false)
         if ctx then
             ctx.setSource("touch_dpad_" .. direction, nil)
         end
     end
 end
 
-local function bindDirectionButton(button: TextButton, direction: string)
+local function bindSectorButton(button: TextButton, direction: string)
+    -- Spokes of one sector share the finger count and the visual, so any
+    -- spoke press lights the whole pie slice and the direction survives
+    -- until every finger on the sector lifts.
     local sourceName = "touch_dpad_" .. direction
+    local state = sectorTouches[direction]
     local active = 0
     button.InputBegan:Connect(function(input)
         if not enabled then
@@ -251,9 +280,12 @@ local function bindDirectionButton(button: TextButton, direction: string)
         if input.UserInputType == Enum.UserInputType.Touch
             or input.UserInputType == Enum.UserInputType.MouseButton1 then
             active += 1
-            button.BackgroundTransparency = DPAD_PRESSED_TRANSPARENCY
-            if ctx then
-                ctx.setSource(sourceName, direction)
+            state.count += 1
+            if state.count == 1 then
+                applySectorVisual(direction, true)
+                if ctx then
+                    ctx.setSource(sourceName, direction)
+                end
             end
         end
     end)
@@ -261,8 +293,9 @@ local function bindDirectionButton(button: TextButton, direction: string)
         if input.UserInputType == Enum.UserInputType.Touch
             or input.UserInputType == Enum.UserInputType.MouseButton1 then
             active = math.max(0, active - 1)
-            if active == 0 then
-                button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
+            state.count = math.max(0, state.count - 1)
+            if state.count == 0 then
+                applySectorVisual(direction, false)
                 if ctx then
                     ctx.setSource(sourceName, nil)
                 end
@@ -270,24 +303,29 @@ local function bindDirectionButton(button: TextButton, direction: string)
         end
     end)
     button.MouseLeave:Connect(function()
-        -- Mouse-dragging off the button releases it. A lifted touch already
-        -- fired InputEnded, so this only matters for the mouse.
+        -- Mouse-dragging off the spoke releases its hold. A lifted touch
+        -- already fired InputEnded, so this only matters for the mouse.
+        state.count = math.max(0, state.count - active)
         active = 0
-        button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
-        if ctx then
-            ctx.setSource(sourceName, nil)
+        if state.count == 0 then
+            applySectorVisual(direction, false)
+            if ctx then
+                ctx.setSource(sourceName, nil)
+            end
         end
     end)
 end
 
 local function buildDirectionPad(frame: Frame)
-    -- Same bottom-left spot as the joystick base, grown for thumbs: a 136px
-    -- pad with four 60px round buttons in a cross, centres 35px out of the
-    -- middle (3px outer edge margin, 10px gap between opposite buttons).
-    local padSize = 136
-    local buttonSize = 60
+    -- Same bottom-left spot, styled after the reference art: a 160px ring of
+    -- near-black pie sectors, each fanned from nine rotated spokes, around a
+    -- translucent dead hole with a small x marker and upright arrow labels
+    -- mid-band. Pressing floods one sector blue; the hole never triggers.
+    local padSize = 160
+    local holeDiameter = 64
     local margin = 24
-    local offset = 35
+    local spokesPerSector = 9
+    local step = 90 / spokesPerSector
 
     local pad = Instance.new("Frame")
     pad.Name = "DPad"
@@ -299,20 +337,98 @@ local function buildDirectionPad(frame: Frame)
     pad.ZIndex = 50001
     pad.Parent = frame
 
-    local layout = {
-        { "up", "▲", UDim2.fromOffset(padSize / 2, padSize / 2 - offset) },
-        { "down", "▼", UDim2.fromOffset(padSize / 2, padSize / 2 + offset) },
-        { "left", "◀", UDim2.fromOffset(padSize / 2 - offset, padSize / 2) },
-        { "right", "▶", UDim2.fromOffset(padSize / 2 + offset, padSize / 2) },
+    local half = padSize / 2
+    local holeRadius = holeDiameter / 2
+    -- Constant rim width makes neighbouring spokes overlap slightly, which
+    -- paints each sector as one seamless pie slice from hole edge to rim.
+    local spokeWidth = math.floor(2 * half * math.sin(math.rad(step / 2)) + 0.5)
+    local spokeLength = half - holeRadius
+    local midRadius = (holeRadius + half) / 2
+    local sectors = {
+        { name = "DPadUp", direction = "up", glyph = "▲", angle = 0 },
+        { name = "DPadRight", direction = "right", glyph = "▶", angle = 90 },
+        { name = "DPadDown", direction = "down", glyph = "▼", angle = 180 },
+        { name = "DPadLeft", direction = "left", glyph = "◀", angle = 270 },
     }
-    for _, entry in ipairs(layout) do
-        local direction, glyph, position = entry[1], entry[2], entry[3]
-        local button = makeButton(pad, glyph, buttonSize, position)
-        button.Name = "DPad" .. string.upper(string.sub(direction, 1, 1)) .. string.sub(direction, 2)
-        button.ZIndex = 50002
-        bindDirectionButton(button, direction)
-        directionPadButtons[direction] = button
+    for _, sector in ipairs(sectors) do
+        sectorTouches[sector.direction] = { count = 0 }
+        local spokes = {}
+        for i = 1, spokesPerSector do
+            local angle = sector.angle - 45 + (i - 0.5) * step
+            local spoke = Instance.new("TextButton")
+            spoke.Name = sector.name .. "Seg" .. i
+            spoke.AnchorPoint = Vector2.new(0.5, 0.5)
+            spoke.Position = UDim2.fromOffset(
+                half + midRadius * math.sin(math.rad(angle)),
+                half - midRadius * math.cos(math.rad(angle)))
+            spoke.Size = UDim2.fromOffset(spokeWidth, spokeLength)
+            spoke.Rotation = angle
+            spoke.BackgroundColor3 = DPAD_IDLE_COLOR
+            spoke.BackgroundTransparency = DPAD_IDLE_FILL
+            spoke.BorderSizePixel = 0
+            spoke.AutoButtonColor = false
+            spoke.Text = ""
+            spoke.ZIndex = 50002
+            spoke.Parent = pad
+            bindSectorButton(spoke, sector.direction)
+            spokes[i] = spoke
+        end
+
+        -- Upright arrow at the middle of the band, like the reference labels.
+        local label = Instance.new("TextLabel")
+        label.Name = sector.name .. "Label"
+        label.AnchorPoint = Vector2.new(0.5, 0.5)
+        label.Position = UDim2.fromOffset(
+            half + midRadius * math.sin(math.rad(sector.angle)),
+            half - midRadius * math.cos(math.rad(sector.angle)))
+        label.Size = UDim2.fromOffset(48, 48)
+        label.BackgroundTransparency = 1
+        label.Font = Enum.Font.GothamBold
+        label.Text = sector.glyph
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextSize = 24
+        label.TextTransparency = DPAD_IDLE_TEXT_TRANSPARENCY
+        label.ZIndex = 50007
+        label.Parent = pad
+
+        directionPadButtons[sector.direction] = { spokes = spokes, label = label }
     end
+
+    -- Dead hole: visual only, nothing beneath it, never triggers a direction.
+    local centre = Instance.new("Frame")
+    centre.Name = "DPadCentre"
+    centre.AnchorPoint = Vector2.new(0.5, 0.5)
+    centre.Position = UDim2.fromOffset(half, half)
+    centre.Size = UDim2.fromOffset(holeDiameter, holeDiameter)
+    centre.BackgroundColor3 = DPAD_IDLE_COLOR
+    centre.BackgroundTransparency = 0.45
+    centre.BorderSizePixel = 0
+    centre.ZIndex = 50003
+    centre.Parent = pad
+
+    local centreCorner = Instance.new("UICorner")
+    centreCorner.CornerRadius = UDim.new(0.5, 0)
+    centreCorner.Parent = centre
+
+    local centreStroke = Instance.new("UIStroke")
+    centreStroke.Color = Color3.fromRGB(255, 255, 255)
+    centreStroke.Transparency = 0.85
+    centreStroke.Thickness = 1
+    centreStroke.Parent = centre
+
+    local mark = Instance.new("TextLabel")
+    mark.Name = "DPadCentreMark"
+    mark.AnchorPoint = Vector2.new(0.5, 0.5)
+    mark.Position = UDim2.fromOffset(half, half)
+    mark.Size = UDim2.fromOffset(holeDiameter, holeDiameter)
+    mark.BackgroundTransparency = 1
+    mark.Font = Enum.Font.Gotham
+    mark.Text = "×"
+    mark.TextColor3 = Color3.fromRGB(255, 255, 255)
+    mark.TextTransparency = 0.55
+    mark.TextSize = 14
+    mark.ZIndex = 50007
+    mark.Parent = pad
 end
 
 local function buildJoystick(frame: Frame)
