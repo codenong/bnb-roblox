@@ -186,9 +186,11 @@ for name in Input InputKeyboard InputGamepad InputTouch; do
     sed -E 's/require\(script\.Parent:WaitForChild\("([A-Za-z0-9_]+)"\)\)/require(".\/\1")/g' "../src/client/$name.luau"
   } > "$INPUT_BUILD/$name.luau"
 done
-cp client/ClientEnv.luau client/input_test.luau client/input_touch_test.luau testlib.luau "$INPUT_BUILD/"
+cp client/ClientEnv.luau client/input_test.luau client/input_touch_test.luau client/input_dpad_test.luau testlib.luau "$INPUT_BUILD/"
 
 echo "== input_test.luau (keyboard / arrows / gamepad mapping)"
 "$LUAU" "$INPUT_BUILD/input_test.luau"
 echo "== input_touch_test.luau (fixed four-way touch joystick)"
 "$LUAU" "$INPUT_BUILD/input_touch_test.luau"
+echo "== input_dpad_test.luau (touch four-way direction buttons, the default layout)"
+"$LUAU" "$INPUT_BUILD/input_dpad_test.luau"

@@ -1,9 +1,11 @@
 -- src/client/InputTouch.luau
--- Touch device: a fixed four-way on-screen joystick plus the bubble and item
--- buttons. Touch steering is relative to an anchor that trails the thumb
--- (joystickAnchorX/Y); all distances are screen pixels measured from the
--- anchor. The knob and base are visuals only; only the first finger owns the
--- stick.
+-- Touch device: a left-hand movement layout plus the bubble and item buttons.
+-- Touch.USE_DIRECTION_PAD picks the movement layout when the controls are
+-- built (Touch.init): the default is four direction buttons in the joystick's
+-- old spot; the alternative is the fixed four-way on-screen joystick. Its
+-- steering is relative to an anchor that trails the thumb (joystickAnchorX/Y);
+-- all distances are screen pixels measured from the anchor. The knob and base
+-- are visuals only; only the first finger owns the stick.
 
 local UserInputService = game:GetService("UserInputService")
 
@@ -11,6 +13,13 @@ local Touch = {}
 
 local ctx = nil
 local enabled = true
+
+-- The left-hand touch layout. Set before Touch.init (the controls are built
+-- once, when the device has a touch screen):
+--   true  = four direction buttons (default). Each button owns one source and
+--           press order decides priority, exactly like held keyboard keys.
+--   false = the dragging joystick.
+Touch.USE_DIRECTION_PAD = true
 
 local controls = nil
 local joystickBase = nil
@@ -212,16 +221,100 @@ local function makeButton(parent: Instance, text: string, size: number, position
     return button
 end
 
-local function createTouchControls(gui: ScreenGui)
-    local frame = Instance.new("Frame")
-    frame.Name = "TouchControls"
-    frame.BackgroundTransparency = 1
-    frame.Size = UDim2.fromScale(1, 1)
-    frame.ZIndex = 50000
-    frame.Visible = false
-    frame.Parent = gui
-    controls = frame
+---------------------------------------------------------------- 四方向按键
 
+-- Press-and-hold buttons in the joystick's spot. Each button owns one source
+-- ("touch_dpad_<direction>"), so held buttons keep their press order and the
+-- hub treats the newest press as the current direction -- the same contract
+-- as held keyboard keys. The per-button finger count keeps the direction
+-- alive while two fingers rest on one button.
+local DPAD_IDLE_TRANSPARENCY = 0.72
+local DPAD_PRESSED_TRANSPARENCY = 0.5
+local directionPadButtons = {} -- direction -> TextButton, for the reset paths
+
+local function resetDirectionPad()
+    for direction, button in pairs(directionPadButtons) do
+        button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
+        if ctx then
+            ctx.setSource("touch_dpad_" .. direction, nil)
+        end
+    end
+end
+
+local function bindDirectionButton(button: TextButton, direction: string)
+    local sourceName = "touch_dpad_" .. direction
+    local active = 0
+    button.InputBegan:Connect(function(input)
+        if not enabled then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            active += 1
+            button.BackgroundTransparency = DPAD_PRESSED_TRANSPARENCY
+            if ctx then
+                ctx.setSource(sourceName, direction)
+            end
+        end
+    end)
+    button.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            active = math.max(0, active - 1)
+            if active == 0 then
+                button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
+                if ctx then
+                    ctx.setSource(sourceName, nil)
+                end
+            end
+        end
+    end)
+    button.MouseLeave:Connect(function()
+        -- Mouse-dragging off the button releases it. A lifted touch already
+        -- fired InputEnded, so this only matters for the mouse.
+        active = 0
+        button.BackgroundTransparency = DPAD_IDLE_TRANSPARENCY
+        if ctx then
+            ctx.setSource(sourceName, nil)
+        end
+    end)
+end
+
+local function buildDirectionPad(frame: Frame)
+    -- Same footprint as the joystick base: a 106px bottom-left pad with four
+    -- 46px round buttons in a cross, centres 27px out of the middle.
+    local padSize = 106
+    local buttonSize = 46
+    local margin = 24
+    local offset = 27
+
+    local pad = Instance.new("Frame")
+    pad.Name = "DPad"
+    pad.AnchorPoint = Vector2.new(0.5, 1)
+    pad.Position = UDim2.new(0, margin + padSize / 2, 1, -margin)
+    pad.Size = UDim2.fromOffset(padSize, padSize)
+    pad.BackgroundTransparency = 1
+    pad.BorderSizePixel = 0
+    pad.ZIndex = 50001
+    pad.Parent = frame
+
+    local layout = {
+        { "up", "▲", UDim2.fromOffset(padSize / 2, padSize / 2 - offset) },
+        { "down", "▼", UDim2.fromOffset(padSize / 2, padSize / 2 + offset) },
+        { "left", "◀", UDim2.fromOffset(padSize / 2 - offset, padSize / 2) },
+        { "right", "▶", UDim2.fromOffset(padSize / 2 + offset, padSize / 2) },
+    }
+    for _, entry in ipairs(layout) do
+        local direction, glyph, position = entry[1], entry[2], entry[3]
+        local button = makeButton(pad, glyph, buttonSize, position)
+        button.Name = "DPad" .. string.upper(string.sub(direction, 1, 1)) .. string.sub(direction, 2)
+        button.ZIndex = 50002
+        bindDirectionButton(button, direction)
+        directionPadButtons[direction] = button
+    end
+end
+
+local function buildJoystick(frame: Frame)
     -- Sized for a thumb: a 106px base with a 40px cap keeps the whole rocking
     -- motion inside roughly a 29px radius, which is the comfortable arc of a
     -- resting thumb instead of a full swipe across the lower screen.
@@ -306,6 +399,23 @@ local function createTouchControls(gui: ScreenGui)
             updateJoystick(input.Position)
         end
     end)
+end
+
+local function createTouchControls(gui: ScreenGui)
+    local frame = Instance.new("Frame")
+    frame.Name = "TouchControls"
+    frame.BackgroundTransparency = 1
+    frame.Size = UDim2.fromScale(1, 1)
+    frame.ZIndex = 50000
+    frame.Visible = false
+    frame.Parent = gui
+    controls = frame
+
+    if Touch.USE_DIRECTION_PAD then
+        buildDirectionPad(frame)
+    else
+        buildJoystick(frame)
+    end
 
     local bubble = makeButton(frame, "泡泡", 88, UDim2.new(1, -82, 1, -86))
     bubble.BackgroundColor3 = Color3.fromRGB(120, 200, 255)
@@ -362,6 +472,7 @@ function Touch.setEnabled(value: boolean)
     enabled = value
     if not enabled then
         resetJoystick()
+        resetDirectionPad()
     end
 end
 
@@ -371,11 +482,13 @@ function Touch.setControlsVisible(visible: boolean)
     end
     if not visible then
         resetJoystick()
+        resetDirectionPad()
     end
 end
 
 function Touch.reset()
     resetJoystick()
+    resetDirectionPad()
 end
 
 -- Test hook: replace the clock used to time a tap (seconds).

@@ -9,6 +9,11 @@ local Vector2, Vector3 = Env.Vector2, Env.Vector3
 
 Env.game:GetService("UserInputService").TouchEnabled = true
 
+-- This file exercises the dragging joystick, so opt out of the default
+-- direction-pad layout before the controls are built.
+local TouchModule = require("./InputTouch")
+TouchModule.USE_DIRECTION_PAD = false
+
 local Input = require("./Input")
 Input.init({})
 Input.setEnabled(true)
@@ -27,15 +32,14 @@ local knob = find("JoystickKnob")
 local surface = find("JoystickSurface")
 local controls = find("TouchControls")
 
-check("touch controls replace the four-button pad", controls ~= nil and joystick ~= nil and knob ~= nil and surface ~= nil)
-check("old D-pad is gone", find("DPad") == nil)
+check("joystick layout built (base, knob, surface)", controls ~= nil and joystick ~= nil and knob ~= nil and surface ~= nil)
+check("joystick mode builds no direction pad", find("DPad") == nil)
 check("bubble and item buttons remain", find("泡泡") ~= nil and find("道具") ~= nil)
 check("touch controls start hidden", controls.Visible == false)
 Input.setControlsVisible(true)
 check("touch controls can be shown", controls.Visible == true)
 
 -- Tap timing is measured with an injectable clock so contact times are exact.
-local TouchModule = require("./InputTouch")
 local now = 0
 TouchModule._setClock(function()
     return now
