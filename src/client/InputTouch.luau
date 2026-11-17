@@ -281,12 +281,13 @@ local function bindDirectionButton(button: TextButton, direction: string)
 end
 
 local function buildDirectionPad(frame: Frame)
-    -- Same footprint as the joystick base: a 106px bottom-left pad with four
-    -- 46px round buttons in a cross, centres 27px out of the middle.
-    local padSize = 106
-    local buttonSize = 46
+    -- Same bottom-left spot as the joystick base, grown for thumbs: a 136px
+    -- pad with four 60px round buttons in a cross, centres 35px out of the
+    -- middle (3px outer edge margin, 10px gap between opposite buttons).
+    local padSize = 136
+    local buttonSize = 60
     local margin = 24
-    local offset = 27
+    local offset = 35
 
     local pad = Instance.new("Frame")
     pad.Name = "DPad"

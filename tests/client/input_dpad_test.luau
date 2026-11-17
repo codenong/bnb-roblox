@@ -42,13 +42,13 @@ check("touch controls start hidden", controls.Visible == false)
 Input.setControlsVisible(true)
 check("touch controls can be shown", controls.Visible == true)
 
--- The pad takes the joystick base's exact spot: anchored bottom-left at
--- (24, H-24), 106x106, with 46px round buttons.
-check("the pad sits where the joystick was",
-    pad.Position.X.Offset == 77 and pad.Position.Y.Offset == -24 and pad.Size.X.Offset == 106,
+-- The pad keeps the joystick's bottom-left spot, grown to thumb size:
+-- anchored at (24, H-24), 136x136, with 60px round buttons.
+check("the pad keeps the bottom-left spot, grown to 136px",
+    pad.Position.X.Offset == 92 and pad.Position.Y.Offset == -24 and pad.Size.X.Offset == 136,
     tostring(pad.Position.X.Offset) .. "," .. tostring(pad.Position.Y.Offset) .. "," .. tostring(pad.Size.X.Offset))
-check("the buttons are 46px wide",
-    up.Size.X.Offset == 46 and right.Size.X.Offset == 46,
+check("the buttons are 60px wide",
+    up.Size.X.Offset == 60 and right.Size.X.Offset == 60,
     tostring(up.Size.X.Offset) .. "/" .. tostring(right.Size.X.Offset))
 
 local function press(button)
