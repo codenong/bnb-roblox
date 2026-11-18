@@ -1,7 +1,7 @@
 -- src/client/InputTouch.luau
 -- Touch device: a left-hand movement layout plus the bubble and item buttons.
 -- Touch.USE_DIRECTION_PAD picks the movement layout when the controls are
--- built (Touch.init): the default is four direction buttons in the joystick's
+-- built (Touch.init): the default is a four-way ring pad in the joystick's
 -- old spot; the alternative is the fixed four-way on-screen joystick. Its
 -- steering is relative to an anchor that trails the thumb (joystickAnchorX/Y);
 -- all distances are screen pixels measured from the anchor. The knob and base
@@ -16,8 +16,8 @@ local enabled = true
 
 -- The left-hand touch layout. Set before Touch.init (the controls are built
 -- once, when the device has a touch screen):
---   true  = four direction buttons (default). Each button owns one source and
---           press order decides priority, exactly like held keyboard keys.
+--   true  = the four-way ring pad (default): one touch surface steered by the
+--           thumb's position, so it can slide from sector to sector.
 --   false = the dragging joystick.
 Touch.USE_DIRECTION_PAD = true
 
@@ -223,212 +223,378 @@ end
 
 ---------------------------------------------------------------- 四方向按键
 
--- Press-and-hold ring sectors styled after the reference art: a near-black
--- ring split into four pie sectors around a translucent dead hole. Each
--- sector owns one source ("touch_dpad_<direction>"), so held sectors keep
--- their press order and the hub treats the newest press as the current
--- direction -- the same contract as held keyboard keys. The per-sector
--- finger count (shared across all its spokes) keeps the direction alive
--- while two fingers rest anywhere on the sector. Pressing floods the whole
--- sector blue and lights its arrow; releasing restores the dark ring.
-local DPAD_IDLE_COLOR = Color3.fromRGB(15, 16, 22)
-local DPAD_IDLE_FILL = 0
-local DPAD_PRESSED_COLOR = Color3.fromRGB(45, 110, 255)
-local DPAD_PRESSED_FILL = 0
-local DPAD_IDLE_TEXT_TRANSPARENCY = 0.3
-local DPAD_PRESSED_TEXT_TRANSPARENCY = 0
-local DPAD_SPOKE_ZINDEX = 50002
-local DPAD_ACTIVE_ZINDEX = 50006
-local directionPadButtons = {} -- direction -> { spokes = {...}, label }, for the reset paths
-local sectorTouches = {} -- direction -> { count }, active fingers across the sector
+-- A ring split into four sectors (up / right / down / left) around a round hub.
+-- The whole ring is the touch target, so the thumb has a large area to land on,
+-- and it is steered by WHERE the thumb is, not by which button it landed on:
+--   * One transparent surface owns the touch. The thumb can slide from one
+--     sector to the next without lifting, and keeps steering after it leaves the
+--     ring, exactly like the joystick (the first finger only; the GUI gives us
+--     the press, UserInputService gives us the drag and the lift).
+--   * The direction is the quadrant of the thumb around the pad centre, so there
+--     are no gaps between the sectors to fall into. It is digital and starts at
+--     the moment of the press, like a held key.
+--   * Hysteresis keeps it steady: the hub in the middle is a dead zone with an
+--     engage/release pair, and switching axis needs a clear margin, the same
+--     tuning idea as the joystick and the gamepad stick.
+--
+-- Drawing: nothing here relies on clipping or on group transparency (CanvasGroup
+-- clipping/GroupTransparency did not take effect on the target runtime, and the
+-- sectors were drawn as huge unclipped squares). Each sector is built from
+-- 1px-thick bars computed row by row, and every bar is kept inside the ring's
+-- circle by construction, so nothing can be drawn outside it. Transparency is set
+-- on each bar, which is uniform because bars never overlap.
+local TOUCH_PAD_SOURCE = "touch_dpad"
 
-local function applySectorVisual(direction: string, pressed: boolean)
-    local sector = directionPadButtons[direction]
-    if not sector then
+-- Geometry in screen px. The pad keeps the old joystick's bottom-left spot.
+local PAD_SIZE = 152 -- outer diameter of the ring
+local PAD_MARGIN = 24 -- from the left and bottom edges
+local PAD_HIT_MARGIN = 24 -- the touch surface reaches this far past the ring
+local PAD_HUB_DIAMETER = 44 -- the round hub in the middle (dead zone)
+local PAD_THUMB_DIAMETER = 13
+local PAD_THUMB_REACH = 8 -- how far the dot leans toward the pressed sector
+local PAD_SEAM_THICKNESS = 3 -- the dark line between neighbouring sectors
+local PAD_ARROW_RADIUS = 49 -- the arrow sits mid-band
+local PAD_ARROW_ARM = 14 -- length of each stroke of the chevron
+local PAD_ARROW_THICKNESS = 4
+
+-- Steering, in screen px from the pad centre.
+--   PAD_ENGAGE_RADIUS  from rest the thumb must be this far out to steer.
+--   PAD_RELEASE_RADIUS once steering, only coming back this close stops.
+--   PAD_AXIS_BIAS      to turn a corner the other axis must win by this factor.
+local PAD_ENGAGE_RADIUS = 18
+local PAD_RELEASE_RADIUS = 11
+local PAD_AXIS_BIAS = 1.15
+
+-- Look.
+local PAD_SECTOR_IDLE_COLOR = Color3.fromRGB(16, 20, 34)
+local PAD_SECTOR_IDLE_TRANSPARENCY = 0.42
+local PAD_SECTOR_PRESSED_COLOR = Color3.fromRGB(62, 140, 255)
+local PAD_SECTOR_PRESSED_TRANSPARENCY = 0.06
+local PAD_SEAM_COLOR = Color3.fromRGB(6, 8, 16)
+local PAD_SEAM_TRANSPARENCY = 0.3
+local PAD_ARROW_IDLE_TRANSPARENCY = 0.35
+local PAD_ARROW_PRESSED_TRANSPARENCY = 0
+local PAD_HUB_COLOR = Color3.fromRGB(10, 14, 26)
+local PAD_HUB_IDLE_TRANSPARENCY = 0.3
+local PAD_HUB_PRESSED_TRANSPARENCY = 0.15
+
+-- direction -> unit vector from the pad centre (y grows downward), whether its
+-- bars are rows (up/down) or columns (left/right), and the chevron rotation.
+local PAD_SECTORS = {
+    { name = "DPadUp", direction = "up", x = 0, y = -1, rows = true, arrowRotation = 0 },
+    { name = "DPadRight", direction = "right", x = 1, y = 0, rows = false, arrowRotation = 90 },
+    { name = "DPadDown", direction = "down", x = 0, y = 1, rows = true, arrowRotation = 180 },
+    { name = "DPadLeft", direction = "left", x = -1, y = 0, rows = false, arrowRotation = 270 },
+}
+
+local padFrame = nil -- the pad container; its Absolute* gives the centre
+local padThumb = nil
+local padHub = nil
+local padSectors = {} -- direction -> { bars, arrows, lit, x, y }
+local padTouch = nil -- the one finger that owns the pad
+local padDirection = nil
+
+-- Which way a thumb at (dx, dy) from the pad centre steers, given what it is
+-- steering now. y grows downward. Pure, so the hysteresis is easy to test.
+local function padDirectionFor(dx: number, dy: number, current: string?): string?
+    local radius = if current then PAD_RELEASE_RADIUS else PAD_ENGAGE_RADIUS
+    if dx * dx + dy * dy < radius * radius then
+        return nil
+    end
+
+    local ax, ay = math.abs(dx), math.abs(dy)
+    local horizontal
+    if current == "left" or current == "right" then
+        horizontal = not (ay > ax * PAD_AXIS_BIAS)
+    elseif current == "up" or current == "down" then
+        horizontal = ax > ay * PAD_AXIS_BIAS
+    else
+        horizontal = ax >= ay
+    end
+
+    if horizontal then
+        return if dx >= 0 then "right" else "left"
+    end
+    return if dy > 0 then "down" else "up"
+end
+
+-- Light the sector that is held (or none) and lean the dot toward it. Only the
+-- sectors whose state changes are touched: each one is a few dozen bars.
+local function applyPadVisual(direction: string?)
+    for sectorDirection, part in pairs(padSectors) do
+        local pressed = sectorDirection == direction
+        if part.lit ~= pressed then
+            part.lit = pressed
+            local color = if pressed then PAD_SECTOR_PRESSED_COLOR else PAD_SECTOR_IDLE_COLOR
+            local transparency = if pressed then PAD_SECTOR_PRESSED_TRANSPARENCY else PAD_SECTOR_IDLE_TRANSPARENCY
+            for _, bar in ipairs(part.bars) do
+                bar.BackgroundColor3 = color
+                bar.BackgroundTransparency = transparency
+            end
+            for _, arm in ipairs(part.arrows) do
+                arm.BackgroundTransparency = if pressed then PAD_ARROW_PRESSED_TRANSPARENCY else PAD_ARROW_IDLE_TRANSPARENCY
+            end
+        end
+    end
+    if padHub then
+        padHub.BackgroundTransparency = if direction then PAD_HUB_PRESSED_TRANSPARENCY else PAD_HUB_IDLE_TRANSPARENCY
+    end
+    if padThumb then
+        local lean = if direction then padSectors[direction] else nil
+        local half = PAD_SIZE / 2
+        padThumb.Position = UDim2.fromOffset(
+            half + (if lean then lean.x * PAD_THUMB_REACH else 0),
+            half + (if lean then lean.y * PAD_THUMB_REACH else 0)
+        )
+        padThumb.BackgroundTransparency = if direction then 0.1 else 0.55
+    end
+end
+
+local function setPadDirection(direction: string?)
+    if direction == padDirection then
         return
     end
-    for _, spoke in ipairs(sector.spokes) do
-        spoke.BackgroundColor3 = pressed and DPAD_PRESSED_COLOR or DPAD_IDLE_COLOR
-        spoke.BackgroundTransparency = pressed and DPAD_PRESSED_FILL or DPAD_IDLE_FILL
-        -- Raise the lit sector above its neighbours so its spoke edges win
-        -- the diagonal overlaps and the slice keeps its radial boundary.
-        spoke.ZIndex = pressed and DPAD_ACTIVE_ZINDEX or DPAD_SPOKE_ZINDEX
+    padDirection = direction
+    applyPadVisual(direction)
+    if ctx then
+        ctx.setSource(TOUCH_PAD_SOURCE, direction)
     end
-    sector.label.TextTransparency = pressed and DPAD_PRESSED_TEXT_TRANSPARENCY or DPAD_IDLE_TEXT_TRANSPARENCY
+end
+
+local function updatePad(position: Vector3)
+    if not padFrame then
+        return
+    end
+    -- AbsoluteSize is only zero before the first layout pass (headless runs).
+    local width = padFrame.AbsoluteSize.X
+    local height = padFrame.AbsoluteSize.Y
+    if width <= 0 or height <= 0 then
+        width, height = PAD_SIZE, PAD_SIZE
+    end
+    local dx = position.X - (padFrame.AbsolutePosition.X + width / 2)
+    local dy = position.Y - (padFrame.AbsolutePosition.Y + height / 2)
+    setPadDirection(padDirectionFor(dx, dy, padDirection))
 end
 
 local function resetDirectionPad()
-    for direction in pairs(directionPadButtons) do
-        applySectorVisual(direction, false)
-        if ctx then
-            ctx.setSource("touch_dpad_" .. direction, nil)
-        end
+    padTouch = nil
+    padDirection = nil
+    applyPadVisual(nil)
+    if ctx then
+        ctx.setSource(TOUCH_PAD_SOURCE, nil)
     end
 end
 
-local function bindSectorButton(button: TextButton, direction: string)
-    -- Spokes of one sector share the finger count and the visual, so any
-    -- spoke press lights the whole pie slice and the direction survives
-    -- until every finger on the sector lifts.
-    local sourceName = "touch_dpad_" .. direction
-    local state = sectorTouches[direction]
-    local active = 0
-    button.InputBegan:Connect(function(input)
-        if not enabled then
-            return
-        end
-        if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            active += 1
-            state.count += 1
-            if state.count == 1 then
-                applySectorVisual(direction, true)
-                if ctx then
-                    ctx.setSource(sourceName, direction)
+local function makeCircle(instance: GuiObject)
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0.5, 0)
+    corner.Parent = instance
+end
+
+local function addStroke(instance: GuiObject, transparency: number, thickness: number)
+    local stroke = Instance.new("UIStroke")
+    stroke.Color = Color3.fromRGB(255, 255, 255)
+    stroke.Transparency = transparency
+    stroke.Thickness = thickness
+    stroke.Parent = instance
+end
+
+-- One sector as 1px bars. A sector is the part of the ring where the thumb is
+-- nearer its axis than either neighbouring axis, i.e. along that axis `d` out
+-- from the centre it is |across| <= d wide. For each 1px slice [t, t+1] along the
+-- axis the bar spans from the hub's edge (or the middle) out to the diagonal or
+-- the circle, whichever comes first. The circle limit uses the slice's far edge,
+-- so a bar's corners are never outside the ring. Up/down sectors are rows, left/
+-- right sectors are columns.
+local function buildSectorBars(parent: Instance, sector, half: number, radius: number, hubRadius: number): { Frame }
+    local bars = {}
+    local function addBar(x: number, y: number, width: number, height: number)
+        local bar = Instance.new("Frame")
+        bar.Name = sector.name .. "Bar" .. (#bars + 1)
+        bar.Position = UDim2.fromOffset(x, y)
+        bar.Size = UDim2.fromOffset(width, height)
+        bar.BackgroundColor3 = PAD_SECTOR_IDLE_COLOR
+        bar.BackgroundTransparency = PAD_SECTOR_IDLE_TRANSPARENCY
+        bar.BorderSizePixel = 0
+        bar.ZIndex = 50003
+        bar.Parent = parent
+        bars[#bars + 1] = bar
+    end
+
+    local sign = if sector.rows then sector.y else sector.x
+    for slice = 0, math.floor(radius) - 1 do
+        local near, far = slice, slice + 1
+        local center = slice + 0.5
+        local circleHalf = math.sqrt(math.max(radius * radius - far * far, 0))
+        local reach = math.min(center, circleHalf)
+        -- Overlap the hub by a pixel (it is drawn above) so no hairline shows.
+        local hubHalf = if near < hubRadius then math.sqrt(math.max(hubRadius * hubRadius - near * near, 0)) else 0
+        local inner = math.max(hubHalf - 1, 0)
+        if reach > inner then
+            -- `spans` are the pieces along the slice: one when it reaches the
+            -- middle, two when the hub splits it.
+            local spans = if inner <= 0 then { { -reach, reach } } else { { -reach, -inner }, { inner, reach } }
+            for _, span in ipairs(spans) do
+                local from, to = span[1], span[2]
+                -- Along the axis the slice occupies [near, far] on the sector's side.
+                local axisStart = if sign > 0 then half + near else half - far
+                if sector.rows then
+                    addBar(half + from, axisStart, to - from, 1)
+                else
+                    addBar(axisStart, half + from, 1, to - from)
                 end
             end
         end
-    end)
-    button.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.Touch
-            or input.UserInputType == Enum.UserInputType.MouseButton1 then
-            active = math.max(0, active - 1)
-            state.count = math.max(0, state.count - 1)
-            if state.count == 0 then
-                applySectorVisual(direction, false)
-                if ctx then
-                    ctx.setSource(sourceName, nil)
-                end
-            end
-        end
-    end)
-    button.MouseLeave:Connect(function()
-        -- Mouse-dragging off the spoke releases its hold. A lifted touch
-        -- already fired InputEnded, so this only matters for the mouse.
-        state.count = math.max(0, state.count - active)
-        active = 0
-        if state.count == 0 then
-            applySectorVisual(direction, false)
-            if ctx then
-                ctx.setSource(sourceName, nil)
-            end
-        end
-    end)
+    end
+    return bars
+end
+
+-- An arrow like a chevron: two rounded strokes meeting at a tip, drawn with
+-- frames so it never depends on a font having the glyph. `rotation` turns the
+-- "up" chevron toward the sector (0 up, 90 right, 180 down, 270 left).
+local function buildChevron(parent: Instance, name: string, centerX: number, centerY: number, rotation: number): { Frame }
+    local arms = {}
+    local radians = math.rad(rotation)
+    local cosine, sine = math.cos(radians), math.sin(radians)
+    local reach = PAD_ARROW_ARM / 2 * math.sqrt(0.5)
+    -- The up chevron: the tip is `reach` above the middle and each stroke leans
+    -- 45° back from it, so the whole arrow is centred on (centerX, centerY).
+    for index, side in ipairs({ -1, 1 }) do
+        local localX = side * reach
+        local localY = 0
+        local arm = Instance.new("Frame")
+        arm.Name = name .. "Arrow" .. index
+        arm.AnchorPoint = Vector2.new(0.5, 0.5)
+        arm.Position = UDim2.fromOffset(
+            centerX + localX * cosine - localY * sine,
+            centerY + localX * sine + localY * cosine
+        )
+        arm.Size = UDim2.fromOffset(PAD_ARROW_ARM, PAD_ARROW_THICKNESS)
+        arm.Rotation = rotation + side * 45
+        arm.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        arm.BackgroundTransparency = PAD_ARROW_IDLE_TRANSPARENCY
+        arm.BorderSizePixel = 0
+        arm.ZIndex = 50005
+        arm.Parent = parent
+        local corner = Instance.new("UICorner")
+        corner.CornerRadius = UDim.new(0.5, 0)
+        corner.Parent = arm
+        arms[index] = arm
+    end
+    return arms
 end
 
 local function buildDirectionPad(frame: Frame)
-    -- Same bottom-left spot, styled after the reference art: a 160px ring of
-    -- near-black pie sectors, each fanned from nine rotated spokes, around a
-    -- translucent dead hole with a small x marker and upright arrow labels
-    -- mid-band. Pressing floods one sector blue; the hole never triggers.
-    local padSize = 160
-    local holeDiameter = 64
-    local margin = 24
-    local spokesPerSector = 9
-    local step = 90 / spokesPerSector
+    local half = PAD_SIZE / 2
+    local hubRadius = PAD_HUB_DIAMETER / 2
 
     local pad = Instance.new("Frame")
     pad.Name = "DPad"
     pad.AnchorPoint = Vector2.new(0.5, 1)
-    pad.Position = UDim2.new(0, margin + padSize / 2, 1, -margin)
-    pad.Size = UDim2.fromOffset(padSize, padSize)
+    pad.Position = UDim2.new(0, PAD_MARGIN + half, 1, -PAD_MARGIN)
+    pad.Size = UDim2.fromOffset(PAD_SIZE, PAD_SIZE)
     pad.BackgroundTransparency = 1
     pad.BorderSizePixel = 0
     pad.ZIndex = 50001
     pad.Parent = frame
+    padFrame = pad
 
-    local half = padSize / 2
-    local holeRadius = holeDiameter / 2
-    -- Constant rim width makes neighbouring spokes overlap slightly, which
-    -- paints each sector as one seamless pie slice from hole edge to rim.
-    local spokeWidth = math.floor(2 * half * math.sin(math.rad(step / 2)) + 0.5)
-    local spokeLength = half - holeRadius
-    local midRadius = (holeRadius + half) / 2
-    local sectors = {
-        { name = "DPadUp", direction = "up", glyph = "▲", angle = 0 },
-        { name = "DPadRight", direction = "right", glyph = "▶", angle = 90 },
-        { name = "DPadDown", direction = "down", glyph = "▼", angle = 180 },
-        { name = "DPadLeft", direction = "left", glyph = "◀", angle = 270 },
-    }
-    for _, sector in ipairs(sectors) do
-        sectorTouches[sector.direction] = { count = 0 }
-        local spokes = {}
-        for i = 1, spokesPerSector do
-            local angle = sector.angle - 45 + (i - 0.5) * step
-            local spoke = Instance.new("TextButton")
-            spoke.Name = sector.name .. "Seg" .. i
-            spoke.AnchorPoint = Vector2.new(0.5, 0.5)
-            spoke.Position = UDim2.fromOffset(
-                half + midRadius * math.sin(math.rad(angle)),
-                half - midRadius * math.cos(math.rad(angle)))
-            spoke.Size = UDim2.fromOffset(spokeWidth, spokeLength)
-            spoke.Rotation = angle
-            spoke.BackgroundColor3 = DPAD_IDLE_COLOR
-            spoke.BackgroundTransparency = DPAD_IDLE_FILL
-            spoke.BorderSizePixel = 0
-            spoke.AutoButtonColor = false
-            spoke.Text = ""
-            spoke.ZIndex = 50002
-            spoke.Parent = pad
-            bindSectorButton(spoke, sector.direction)
-            spokes[i] = spoke
-        end
-
-        -- Upright arrow at the middle of the band, like the reference labels.
-        local label = Instance.new("TextLabel")
-        label.Name = sector.name .. "Label"
-        label.AnchorPoint = Vector2.new(0.5, 0.5)
-        label.Position = UDim2.fromOffset(
-            half + midRadius * math.sin(math.rad(sector.angle)),
-            half - midRadius * math.cos(math.rad(sector.angle)))
-        label.Size = UDim2.fromOffset(48, 48)
-        label.BackgroundTransparency = 1
-        label.Font = Enum.Font.GothamBold
-        label.Text = sector.glyph
-        label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        label.TextSize = 24
-        label.TextTransparency = DPAD_IDLE_TEXT_TRANSPARENCY
-        label.ZIndex = 50007
-        label.Parent = pad
-
-        directionPadButtons[sector.direction] = { spokes = spokes, label = label }
+    for _, sector in ipairs(PAD_SECTORS) do
+        local bars = buildSectorBars(pad, sector, half, half, hubRadius)
+        local arrows = buildChevron(
+            pad,
+            sector.name,
+            half + sector.x * PAD_ARROW_RADIUS,
+            half + sector.y * PAD_ARROW_RADIUS,
+            sector.arrowRotation
+        )
+        padSectors[sector.direction] = { bars = bars, arrows = arrows, lit = false, x = sector.x, y = sector.y }
     end
 
-    -- Dead hole: visual only, nothing beneath it, never triggers a direction.
-    local centre = Instance.new("Frame")
-    centre.Name = "DPadCentre"
-    centre.AnchorPoint = Vector2.new(0.5, 0.5)
-    centre.Position = UDim2.fromOffset(half, half)
-    centre.Size = UDim2.fromOffset(holeDiameter, holeDiameter)
-    centre.BackgroundColor3 = DPAD_IDLE_COLOR
-    centre.BackgroundTransparency = 0.45
-    centre.BorderSizePixel = 0
-    centre.ZIndex = 50003
-    centre.Parent = pad
+    -- Dark seams along the two diagonals separate the sectors and hide the
+    -- stair-steps where bars of neighbouring sectors meet. Each seam is as long
+    -- as the ring is wide, so it ends on the circle.
+    for index, rotation in ipairs({ 45, -45 }) do
+        local seam = Instance.new("Frame")
+        seam.Name = "DPadSeam" .. index
+        seam.AnchorPoint = Vector2.new(0.5, 0.5)
+        seam.Position = UDim2.fromOffset(half, half)
+        seam.Size = UDim2.fromOffset(PAD_SIZE, PAD_SEAM_THICKNESS)
+        seam.Rotation = rotation
+        seam.BackgroundColor3 = PAD_SEAM_COLOR
+        seam.BackgroundTransparency = PAD_SEAM_TRANSPARENCY
+        seam.BorderSizePixel = 0
+        seam.ZIndex = 50004
+        seam.Parent = pad
+    end
 
-    local centreCorner = Instance.new("UICorner")
-    centreCorner.CornerRadius = UDim.new(0.5, 0)
-    centreCorner.Parent = centre
+    -- A thin outline around the ring so it reads against any background.
+    local rim = Instance.new("Frame")
+    rim.Name = "DPadRim"
+    rim.Size = UDim2.fromScale(1, 1)
+    rim.BackgroundTransparency = 1
+    rim.BorderSizePixel = 0
+    rim.ZIndex = 50004
+    rim.Parent = pad
+    makeCircle(rim)
+    addStroke(rim, 0.72, 1.5)
 
-    local centreStroke = Instance.new("UIStroke")
-    centreStroke.Color = Color3.fromRGB(255, 255, 255)
-    centreStroke.Transparency = 0.85
-    centreStroke.Thickness = 1
-    centreStroke.Parent = centre
+    -- The hub: a round cap in the middle. It is the steering dead zone.
+    local hub = Instance.new("Frame")
+    hub.Name = "DPadHub"
+    hub.AnchorPoint = Vector2.new(0.5, 0.5)
+    hub.Position = UDim2.fromOffset(half, half)
+    hub.Size = UDim2.fromOffset(PAD_HUB_DIAMETER, PAD_HUB_DIAMETER)
+    hub.BackgroundColor3 = PAD_HUB_COLOR
+    hub.BackgroundTransparency = PAD_HUB_IDLE_TRANSPARENCY
+    hub.BorderSizePixel = 0
+    hub.ZIndex = 50006
+    hub.Parent = pad
+    makeCircle(hub)
+    addStroke(hub, 0.6, 1.2)
+    padHub = hub
 
-    local mark = Instance.new("TextLabel")
-    mark.Name = "DPadCentreMark"
-    mark.AnchorPoint = Vector2.new(0.5, 0.5)
-    mark.Position = UDim2.fromOffset(half, half)
-    mark.Size = UDim2.fromOffset(holeDiameter, holeDiameter)
-    mark.BackgroundTransparency = 1
-    mark.Font = Enum.Font.Gotham
-    mark.Text = "×"
-    mark.TextColor3 = Color3.fromRGB(255, 255, 255)
-    mark.TextTransparency = 0.55
-    mark.TextSize = 14
-    mark.ZIndex = 50007
-    mark.Parent = pad
+    -- The dot in the hub leans toward whatever is held.
+    local thumb = Instance.new("Frame")
+    thumb.Name = "DPadThumb"
+    thumb.AnchorPoint = Vector2.new(0.5, 0.5)
+    thumb.Position = UDim2.fromOffset(half, half)
+    thumb.Size = UDim2.fromOffset(PAD_THUMB_DIAMETER, PAD_THUMB_DIAMETER)
+    thumb.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    thumb.BackgroundTransparency = 0.55
+    thumb.BorderSizePixel = 0
+    thumb.ZIndex = 50007
+    thumb.Parent = pad
+    makeCircle(thumb)
+    padThumb = thumb
+
+    -- The one interactive object. It reaches PAD_HIT_MARGIN past the ring so a
+    -- thumb landing near the edge still counts. Only the press comes from the
+    -- GUI; the drag and the lift are tracked through UserInputService for this
+    -- exact InputObject, so the pad keeps steering after the thumb leaves it.
+    local surface = Instance.new("TextButton")
+    surface.Name = "DPadSurface"
+    surface.Text = ""
+    surface.TextTransparency = 1
+    surface.BackgroundTransparency = 1
+    surface.BorderSizePixel = 0
+    surface.AutoButtonColor = false
+    surface.Selectable = false
+    surface.Position = UDim2.fromOffset(-PAD_HIT_MARGIN, -PAD_HIT_MARGIN)
+    surface.Size = UDim2.fromOffset(PAD_SIZE + 2 * PAD_HIT_MARGIN, PAD_SIZE + 2 * PAD_HIT_MARGIN)
+    surface.ZIndex = 50010
+    surface.Parent = pad
+
+    surface.InputBegan:Connect(function(input)
+        if not enabled or padTouch ~= nil then
+            return
+        end
+        if input.UserInputType == Enum.UserInputType.Touch
+            or input.UserInputType == Enum.UserInputType.MouseButton1 then
+            padTouch = input
+            updatePad(input.Position)
+        end
+    end)
 end
 
 local function buildJoystick(frame: Frame)
@@ -567,6 +733,22 @@ function Touch.init(context, gui)
             if tap then
                 ctx.pulseSource(TOUCH_STICK_SOURCE, tap, TOUCH_TAP_PULSE_TICKS)
             end
+        end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input == padTouch then
+            resetDirectionPad()
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if padTouch
+            and (input == padTouch
+                or (padTouch.UserInputType == Enum.UserInputType.MouseButton1
+                    and input.UserInputType == Enum.UserInputType.MouseMovement))
+        then
+            updatePad(input.Position)
         end
     end)
 
